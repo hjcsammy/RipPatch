@@ -1,0 +1,153 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <!-- 产物名：RipPatch.exe（项目名改了，程序集名默认会跟着走，这里显式固定） -->
+        <AssemblyName>RipPatch</AssemblyName>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+        <!-- 版本号：首次公开发布的版本。
+             Version 决定 NuGet/文件版本与发布产物名（RipPatch-1.0.0-win-x64.zip）。
+             AssemblyVersion 一旦发布就不要随意改：改了会让依赖本程序集的插件失效。 -->
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <!-- 不要往版本号后面追加 "+<commit hash>"。
+             .NET SDK 在 git 仓库里默认会加，产物名会变成
+             RipPatch-1.0.0+7591558f....-win-x64.zip，既难读又会让
+             release 脚本按固定文件名找不到包。 -->
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+        <!-- 资源管理器里「详细信息」标签看到的名称。不设的话会回落到项目名（RipPatch）。 -->
+        <AssemblyTitle>RipPatch</AssemblyTitle>
+        <Product>RipPatch</Product>
+        <Company>RipPatch</Company>
+        <Description>RipPatch — turn Unity game assets into a project you can open.</Description>
+    </PropertyGroup>
+
+    <!-- exe 图标：资源管理器 / 任务栏 / 固定到开始菜单都用它。
+         ApplicationIcon 只决定 exe 自身的图标；窗口标题栏图标在 WebHost 里单独设。 -->
+    <PropertyGroup>
+        <ApplicationIcon>..\Assets\icon.ico</ApplicationIcon>
+    </PropertyGroup>
+
+    <!-- ⚠️ 单文件发布（PublishSingleFile）不可用。
+         Harmony 需要 clrjit.dll 才能生成 IL stub，而它定位该库的方式不认单文件
+         的解压目录：把 clrjit.dll / coreclr.dll 手动放到 exe 旁边也仍然失败，
+         启动即抛 PlatformNotSupportedException: Could not locate clrjit library。
+
+         因此这里不做单文件压缩，改为「多文件 + 可选 zip 分发包」，
+         见 tools/arp.ps1 的 publish / package 命令。
+         如果将来 Harmony 支持了单文件，可以把这个 PropertyGroup 与下面
+         CopyClrjitNextToAppHost 一起恢复。 -->
+
+    <!-- 发布时去掉 pdb：分发包只需要能运行的文件，符号文件体积不小且对用户无用。
+         （调试用 `arp.ps1 build` 产出的 bin 目录，那里保留 pdb。） -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+        <DebugType>embedded</DebugType>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <!-- 窗口图标：运行时从 exe 同目录读取 -->
+      <None Include="..\Assets\icon.ico" Link="icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="AssetRipper.Primitives" Version="3.2.0" />
+      <PackageReference Include="DXDecompiler-ly" Version="0.0.1" />
+      <PackageReference Include="Lib.Harmony" Version="2.4.2" />
+      <!-- Sprite 轮廓生成的三角化：libtess2 的 C# 移植（MIT），对应 Unity 原版的外部依赖 libtess2。 -->
+      <PackageReference Include="LibTessDotNet" Version="1.1.15" />
+      <PackageReference Include="NativeFileDialog" Version="1.0.0" />
+      <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+      <!-- 桌面外壳：Photino.NET 只是原生窗口 + WebView2 宿主，界面本身是本地网页。 -->
+      <PackageReference Include="Photino.NET" Version="4.0.16" />
+    </ItemGroup>
+
+    <!-- 自检测试项目需要访问 internal 类型（Patch 类、Program 等）。 -->
+    <ItemGroup>
+      <InternalsVisibleTo Include="RipPatch.Tests" />
+    </ItemGroup>
+
+    <!-- 注解校验分析器：编译期照 [PatchMethod]/[Access*] 注解做 HRP 诊断。
+         ProjectReference + OutputItemType="Analyzer" 是「项目内分析器」的标准接法：
+         csc 拿到 /analyzer:，Rider 的 Roslyn worker 也按「引用项目产出的分析器」处理。
+         不要再额外加静态 <Analyzer Include=...> —— 同一个 dll 从两条路径进来会让每条
+         诊断报两遍。 -->
+    <ItemGroup>
+      <ProjectReference Include="..\RipPatch.Tools\RipPatch.Tools.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+    <!-- Plugins/ holds Unity Editor scripts that go into an unpacked game
+         project's Assets/Editor after export.  They are payload, not program:
+         excluded from compilation and analysis (they reference UnityEditor,
+         which this project does not), and copied verbatim to the output so the
+         folder can be handed over as-is. -->
+    <ItemGroup>
+        <Compile Remove="Plugins\**\*.cs" />
+        <None Remove="Plugins\**" />
+        <Content Include="Plugins\**\*" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+        <!-- 新 Web UI 的前端资源（HTML/CSS/JS + 打包好的 Fluent 组件）。
+             必须进输出目录，否则发布后的 exe 找不到界面。
+             TargetPath 把 WebUi\wwwroot\** 平铺成输出里的 wwwroot\**（LinkBase 对 Content 不生效）。 -->
+        <ItemGroup>
+                <None Remove="WebUi\wwwroot\**" />
+                <Content Include="WebUi\wwwroot\**\*" TargetPath="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+            </ItemGroup>
+
+            <!-- 许可证必须随二进制一起分发：GPL-3.0 §6 要求附带许可证副本，
+                 Apache-2.0 §4(a) 要求附带其副本与 NOTICE。
+                 ShaderRipper 是 Apache-2.0 且带 GPL 链接例外，两个文件都要。
+                 源路径都在仓库根，用 Link 把它们放进输出的 licenses\ 下。 -->
+            <ItemGroup>
+                <None Include="..\License" Link="licenses\LICENSE-GPL-3.0.txt"
+                      CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+                <None Include="..\ShaderRipper\LICENSE" Link="licenses\LICENSE-ShaderRipper-Apache-2.0.txt"
+                      CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+                <None Include="..\ShaderRipper\LICENSE-EXCEPTION" Link="licenses\LICENSE-EXCEPTION-ShaderRipper-GPL.txt"
+                      CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+                <None Include="..\docs\THIRD-PARTY-NOTICES.md" Link="licenses\THIRD-PARTY-NOTICES.md"
+                      CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+            </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\AssetRipper\Source\AssetRipper.GUI.Web\AssetRipper.GUI.Web.csproj" />
+      <!-- The decompiler library, referenced so the patcher can call it in-process
+                 instead of spawning ShaderRipper.exe and reading files back.
+                 ShaderRipper is a git submodule pinned to tag v1.2.5.
+                 v1.2.5 is required: this project calls
+                 `ShaderDecompiler.Translate(model, includeDxbc)` and reads
+                 `ShaderResult.DxbcPrograms`, neither of which exists in v1.2.4. -->
+            <ProjectReference Include="..\ShaderRipper\src\ShaderRipper\ShaderRipper.csproj" />
+    </ItemGroup>
+
+    <!-- Publish the library next to the patcher binary, so a build leaves a
+         drop-in `ShaderRipper.dll` (+ its pdb) in a fixed location that other
+         tooling can copy from.
+
+         Build 和 Publish 各挂一个 target：Publish 不会触发 Build 的 AfterTargets，
+         而 `dotnet publish` 的产物目录是 $(PublishDir) 而不是 $(OutDir)。 -->
+    <PropertyGroup>
+        <ShaderRipperLibDir>$(MSBuildThisFileDirectory)..\ShaderRipper\src\ShaderRipper\bin\$(Configuration)\$(TargetFramework)\</ShaderRipperLibDir>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ShaderRipperBin Include="$(ShaderRipperLibDir)ShaderRipper.dll" />
+        <ShaderRipperBin Include="$(ShaderRipperLibDir)ShaderRipper.pdb" />
+    </ItemGroup>
+
+    <Target Name="CopyShaderRipperLibrary" AfterTargets="Build">
+        <Copy SourceFiles="@(ShaderRipperBin)" DestinationFolder="$(OutDir)ShaderRipper" SkipUnchangedFiles="true" Condition="Exists('$(ShaderRipperLibDir)ShaderRipper.dll')" />
+        <Warning Text="ShaderRipper.dll not found at $(ShaderRipperLibDir); build that project first." Condition="!Exists('$(ShaderRipperLibDir)ShaderRipper.dll')" />
+        <Message Importance="high" Text="ShaderRipper library -&gt; $(OutDir)ShaderRipper" Condition="Exists('$(ShaderRipperLibDir)ShaderRipper.dll')" />
+    </Target>
+
+    <!-- No publish-time copy: `dotnet publish` already drops ShaderRipper.dll at the
+             app root as a normal dependency, so a second copy under `ShaderRipper\`
+             would only duplicate ~57 MB in the release archive. Build keeps the
+             subfolder copy for tooling that looks for it there. -->
+
+</Project>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  RipPatch 图标。
+
+  设计说明：
+  - 「打开的盒子」= 游戏资源包被拆开（Rip）。
+  - 右上角贴着补丁片 = 修好它（Patch）。
+  - 配色沿用界面：深色底 + 青蓝渐变 #66d3ff → #0078d4。
+
+  小尺寸取舍：
+  - 补丁片只保留 2 道缝线，且加粗 —— 32px 下 3 道细线会糊成灰块。
+  - 盒子轮廓线加粗，16px 时仍能看出「盒子 + 斜贴片」的形状。
+  - 去掉了底板上的高光细节，那些在小尺寸下只是噪点。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="RipPatch">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#232b38"/>
+      <stop offset="1" stop-color="#11151c"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0.1" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6ad6ff"/>
+      <stop offset="1" stop-color="#0078d4"/>
+    </linearGradient>
+    <linearGradient id="patchGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9fe9ff"/>
+      <stop offset="1" stop-color="#3aa8e0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="128" height="128" rx="26" fill="url(#bg)"/>
+
+  <!-- 左半实心：打开的盒子 -->
+  <path d="M24 42 L62 22 L62 84 L24 104 Z" fill="url(#accent)"/>
+  <!-- 顶面 -->
+  <path d="M24 42 L62 22 L104 42 L66 64 Z" fill="#8fdcff" opacity="0.34"/>
+  <!-- 右半只留轮廓：表示已拆开 -->
+  <path d="M66 22 L104 42 L104 82 L66 62" fill="none"
+        stroke="#4cc2ff" stroke-opacity="0.7" stroke-width="6"
+        stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- 补丁片：盖住右上缺口 -->
+  <g transform="rotate(-14 94 40)">
+    <rect x="72" y="22" width="46" height="36" rx="8" fill="url(#patchGrad)"/>
+    <!-- 只两道、更粗，小尺寸下也能看出是「缝过的补丁」 -->
+    <path d="M82 33 h26 M82 45 h26" stroke="#0b2130" stroke-opacity="0.5"
+          stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

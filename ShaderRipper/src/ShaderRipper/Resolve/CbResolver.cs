@@ -1,0 +1,1620 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using ShaderRipper.Ast;
+using ShaderRipper.Data;
+
+namespace ShaderRipper.Resolve
+{
+    /// <summary>
+    /// Works out which Unity constant buffer each <c>dcl_constantbuffer CBn</c>
+    /// really is, and rewrites <c>cbN[row]</c> accesses to the named uniform that
+    /// occupies that slot.
+    ///
+    /// Two pieces of evidence are combined: the pass's name table
+    /// (<c>SerializedPass.m_NameIndices</c>) lists the buffer names the shader uses,
+    /// and the row layout of every Unity cbuffer is fixed by the shipped
+    /// <c>UnityShaderVariables.cginc</c>, where a member is only accepted when its
+    /// name also appears in the name table.
+    ///
+    /// A cbuffer is renamed only when every row it reads is covered by a
+    /// name-confirmed member, and the assignment is a bijection across the stage.
+    /// </summary>
+    internal sealed class CbResolver
+    {
+        public readonly Dictionary<int, string> CbName = new();
+        public readonly Dictionary<(int cb, int row), string> RowExpr = new();
+        /// <summary>Component count the named member actually declares, per row.</summary>
+        public readonly Dictionary<(int cb, int row), int> RowWidth = new();
+        /// <summary>Scalar members that occupy one lane of a row: (cb,row,component) -> name.</summary>
+        public readonly Dictionary<(int cb, int row, int comp), string> CompExpr = new();
+        public readonly Dictionary<int, string> TexName = new();
+        public readonly Dictionary<int, int> SamplerTexture = new();
+        public readonly Dictionary<int, List<(string name, string type)>> GlobalsDecl = new();
+        public readonly HashSet<int> FullyMapped = new();
+        /// <summary>
+        /// How each name was decided, for diagnosing a wrong one.  Console-side only:
+        /// a file that repeated this per pass would bury the shader under commentary.
+        /// </summary>
+        public readonly List<string> Notes = new();
+        /// <summary>
+        /// Notes a reader of the generated file needs, because they qualify a guess
+        /// the file otherwise presents as fact.  These are written into the pass.
+        /// </summary>
+        public readonly List<string> FileNotes = new();
+        /// <summary>Authoritative byte size of each cbuffer, from the parameter blob.</summary>
+        public readonly Dictionary<int, int> CbSize = new();
+
+        /// <summary>
+        /// Registers whose identity the asset itself pins down: the parameter blob        /// records the byte size and the extent fits inside it, and -- when the blob
+        /// carries its register index list -- that list agrees.  Once a register is
+        /// confirmed, its member names follow from the layout table alone, so the
+        /// name-table gate is not needed for naming (it exists to decide *which*
+        /// buffer a register is).  A register identified by the fallback search is
+        /// not confirmed and keeps the stricter gate.
+        /// </summary>
+        public readonly HashSet<int> ConfirmedCb = new();
+
+        private readonly HashSet<string> _nameTable;
+
+        /// <summary>
+        /// Is this member one the shader references?  Array elements are recorded in
+        /// the name table without their index (<c>unity_LightColor</c>, not
+        /// <c>unity_LightColor[3]</c>), so the index is stripped before lookup.
+        /// </summary>
+        private bool InTable(string name)
+        {
+            if (_nameTable.Contains(name)) return true;
+            int i = name.IndexOf('[');
+            if (i > 0 && _nameTable.Contains(name.Substring(0, i))) return true;
+            // Unity's own runtime falls back to its hard-coded built-in tables
+            // when a name index is not in the pass table (see
+            // ReconstructParamNamesFromTable / GetBuiltinVectorParamName in
+            // UnityPlayer).  Engine members (unity_OcclusionMaskSelector,
+            // unity_SHAr, ...) are exactly the ones game builds leave out of
+            // m_NameIndices, so the official list is the authority for them.
+            if (UnityBuiltinParams.IsBuiltin(name)) return true;
+            return false;
+        }
+
+        /// <summary>Constant-buffer layout recorded in this program's parameter blob.</summary>
+        public List<BlobTool.CbInfo> ParamCbs;
+
+        /// <summary>
+        /// <c>m_Parameters.m_ConstantBuffers</c> for <c>$Globals</c> from this stage,
+        /// straight out of the asset.  When present this is the authoritative member
+        /// table -- exact name, exact byte offset, exact component count -- so no
+        /// layout has to be inferred from the property list, the disassembly or an
+        /// outside source.
+        /// </summary>
+        public AssetConstantBuffer AssetGlobals;
+
+        /// <summary>
+        /// Row span of each $Globals matrix member, gathered from every program of
+        /// the shader (see the note where CgProgramWriter builds it).  A buffer's
+        /// own reflection is incomplete for some variants, so the span cannot be
+        /// inferred from one layout alone.
+        /// </summary>
+        public Dictionary<string, int> MatrixRows;
+
+        /// <summary>
+        /// Parameter blocks of every sub-program in this shader.  One sub-program only
+        /// records the members it reads, which is not enough to measure the distance to
+        /// the next member -- so matrices are only detectable across the union.
+        /// </summary>
+        private List<BlobTool.CbInfo> AllParamCbs;
+
+        /// <summary>$Globals layout confirmed by this resolution, reusable by a sibling.</summary>
+        public TmpLayouts.Layout ChosenLayout;
+
+        /// <summary>A layout a sibling sub-program confirmed; a hint, still coverage-checked.</summary>
+        private TmpLayouts.Layout _layoutHint;
+
+        private CbResolver(HashSet<string> nameTable) { _nameTable = nameTable; }
+
+        private Ast.Module _prog;
+
+        /// <summary>
+        /// <c>ShaderPropertyType.Texture</c>, the one property type that binds a
+        /// sampler.  Unity's enum is <c>Color=0, Vector=1, Float=2, Range=3,
+        /// Texture=4, Int=5</c>; the dimension of a texture (2D / 3D / Cube / array)
+        /// is NOT part of it, which the corpus confirms -- a shader whose properties
+        /// include a `3D` texture still reports type 4.
+        ///
+        /// Treating 5..8 as textures as well (as this list used to) makes an `Int`
+        /// property look like a sampler: the naming pass would then hand a sampler
+        /// register the name of a number and shift every real texture by one, and the
+        /// `_ST` inference below would invent a `<name>_ST` row for it.
+        /// </summary>
+        public static readonly HashSet<int> TextureTypes = new() { 4 };
+
+        /// <summary>
+        /// `ShaderPropertyFlags.PerRendererData`: the value arrives with the draw call,
+        /// so the material's own texture table cannot be the source of it.
+        /// </summary>
+        private const int PerRendererData = 2;
+
+        /// <summary>Widest component index (+1) a swizzle touches.</summary>
+        private static int MaxComponent(string sw)
+        {
+            int m = 1;
+            foreach (char c in sw)
+                m = Math.Max(m, c switch { 'x' => 1, 'y' => 2, 'z' => 3, 'w' => 4, _ => 4 });
+            return m;
+        }
+
+        /// <summary>Bitmask of the components a swizzle touches (bit 0 = x).</summary>
+        private static int ComponentMask(string sw)
+        {
+            // The grammar's SWIZZLE token carries its own dot (`.xyxx`), so only the
+            // component letters count.  Reading the dot as component 0 marked lane x
+            // as read on every swizzled operand, and a row a program only touched in
+            // .y then arrived at the declaration layer as "x is read too" -- which is
+            // where the `_cbN_rowK_x` placeholders came from.
+            if (string.IsNullOrEmpty(sw)) return 0xF;
+            int m = 0;
+            foreach (char c in sw)
+            {
+                int bit = c switch { 'x' => 0, 'y' => 1, 'z' => 2, 'w' => 3, _ => -1 };
+                if (bit >= 0) m |= 1 << bit;
+            }
+            return m == 0 ? 0xF : m;
+        }
+
+        /// <summary>register -> row -> component mask this stage reads.</summary>
+        public Dictionary<int, SortedDictionary<int, int>> RowUse = new();
+
+        /// <summary>Registers read with an index that is not a literal.</summary>
+        private HashSet<int> _dynamicIndex = new();
+
+        /// <summary>
+        /// True when some row of this register is read but still has no name, so the
+        /// emitted program needs the raw <c>cbN[...]</c> array.  Decided at emit time
+        /// because cross-variant filling can name rows after the mapping pass ran.
+        /// </summary>
+        public bool HasDynamicIndex(int reg) => _dynamicIndex.Contains(reg);
+
+        public bool NeedsRawArray(int reg, int extent = int.MaxValue)
+        {
+            // A register indexed by a runtime expression cannot be expressed as
+            // named members at all, so the array has to stay even when every
+            // constant row is named.
+            if (_dynamicIndex.Contains(reg)) return true;
+            if (!RowUse.TryGetValue(reg, out var ru)) return false;
+            foreach (var kv in ru)
+            {
+                // Rows past the emitted declaration's own length cannot be read
+                // through it anyway (the same bound the fill pass applies).
+                if (kv.Key >= extent) continue;
+                if (!RowFullyNamed(reg, kv.Key)) return true;
+            }
+            return false;
+        }
+
+        private bool RowFullyNamed(int reg, int row)
+        {
+            if (RowExpr.ContainsKey((reg, row))) return true;
+            int mask = 0xF;
+            if (RowUse.TryGetValue(reg, out var ru) && ru.TryGetValue(row, out int m)) mask = m;
+            for (int c = 0; c < 4; c++)
+                if ((mask & (1 << c)) != 0 && !CompExpr.ContainsKey((reg, row, c)))
+                    return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Does the asset's own reflection describe this member as a matrix?
+        ///
+        /// The reflection answers this for the exact compile, with its row count,
+        /// which is better than any name table.  Two further sources cover what it
+        /// cannot: the engine-name table, and the span arithmetic at the call site --
+        /// a stage that reads only one column of a global matrix never sees the other
+        /// rows in its parameter blob.
+        /// </summary>
+        private bool IsDeclaredMatrix(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            if (MatrixRows != null && MatrixRows.TryGetValue(name, out int rows) && rows >= 2)
+                return true;
+            if (AssetGlobals != null)
+                foreach (var am in AssetGlobals.Members)
+                    if (am.Name == name && am.IsMatrix && am.RowCount >= 2) return true;
+            return Emit.UnityIncludes.IsMatrixMember(name);
+        }
+
+        public static CbResolver Resolve(Ast.Module prog, ICollection<string> nameTable,
+                                         IReadOnlyList<Property> props,                                         List<BlobTool.CbInfo> paramCbs = null,
+                                         int blobIndex = -1,
+                                         AssetConstantBuffer assetGlobals = null,
+                                         Dictionary<int, string> identityHint = null,
+                                         List<BlobTool.CbInfo> allParamCbs = null,
+                                         bool tmpLayout = false,
+                                         TmpLayouts.Layout layoutHint = null,
+                                         System.Collections.Generic.List<(string Name, int Index, int Sampler)> texParams = null,
+                                         Dictionary<string, int> matrixRows = null,
+                                         Dictionary<int, string> glslTexNames = null,
+                                         Dictionary<int, string> blobTexNames = null,
+                                         IReadOnlyDictionary<int, string> assetBindings = null)
+        {
+            var r = new CbResolver(new HashSet<string>(nameTable ?? new List<string>(), StringComparer.Ordinal));
+            r.MatrixRows = matrixRows;
+            r._prog = prog;
+            r.ParamCbs = paramCbs;
+            r.AllParamCbs = allParamCbs;
+            r._layoutHint = layoutHint;
+            r.AssetGlobals = assetGlobals;
+            if (prog == null) return r;
+
+            var decls = prog.Decls.Where(d => d.Kind == "cbuffer").OrderBy(d => d.Register).ToList();
+            var used = new Dictionary<int, SortedSet<int>>();
+            var dynamicIndex = new HashSet<int>();
+            var use = new Dictionary<int, SortedDictionary<int, int>>();
+            foreach (var d in decls) used[d.Register] = new SortedSet<int>();
+            foreach (var ins in prog.Code)
+                foreach (var o in ins.Args)
+                    if (o.Kind == Ast.RegKind.Cb && used.ContainsKey(o.Index))
+                    {
+                        if (o.Row >= 0)
+                        {
+                            used[o.Index].Add(o.Row);
+                            int mask = ComponentMask(o.Swizzle);
+                            if (!use.TryGetValue(o.Index, out var rowUse))
+                                use[o.Index] = rowUse = new SortedDictionary<int, int>();
+                            rowUse.TryGetValue(o.Row, out int prev);
+                            rowUse[o.Row] = prev | mask;
+                        }
+                        else dynamicIndex.Add(o.Index);
+                    }
+            r._dynamicIndex = dynamicIndex;
+            var candidates = r.CbufferNamesInTable();
+            var chosen = r.IdentityFromParamBlob(decls, used) ?? r.AssignBijection(decls, used, candidates);
+            if (assetBindings != null)
+            {
+                // A compiled binding supersedes the heuristic assignment for that
+                // identity, including a guess on a different register.
+                var boundNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var (register, name) in assetBindings)
+                    if (used.ContainsKey(register) && !string.IsNullOrEmpty(name))
+                    {
+                        chosen[register] = name;
+                        r.ConfirmedCb.Add(register);
+                        if (!BlobTool.IsGlobalsName(name)) boundNames.Add(name);
+                    }
+                foreach (int register in chosen.Keys.ToArray())
+                    if (!assetBindings.ContainsKey(register) && boundNames.Contains(chosen[register]))
+                    {
+                        chosen.Remove(register);
+                        r.ConfirmedCb.Remove(register);
+                        r.CbSize.Remove(register);
+                    }
+            }
+            r.AssignFromSiblingHint(decls, used, chosen, identityHint);
+            if (!chosen.Values.Any(BlobTool.IsGlobalsName) && TmpLayouts.Enabled)
+            {
+                var hits = new List<int>();
+                foreach (var d in decls)
+                {
+                    if (chosen.ContainsKey(d.Register) || used[d.Register].Count == 0) continue;
+                    if (TmpLayouts.Match(d.Count, r._nameTable, used[d.Register], out _, r.TmpAnchors()) != null ||
+                        TmpLayouts.MapFrom(r._layoutHint, d.Count, used[d.Register]) != null)
+                        hits.Add(d.Register);
+                }
+                if (Environment.GetEnvironmentVariable("SHADERRIP_TMPDBG") == "1")
+                    Console.Error.WriteLine($"[tmpid] prog={prog.Code.Count}ins/{prog.Decls.Count}dcl decls=[{string.Join(",", decls.Select(x => x.Register))}] "
+                        + $"hits=[{string.Join(",", hits)}] hint={(r._layoutHint == null ? "null" : r._layoutHint.Rows + "r")} "
+                        + $"reads={string.Join(";", decls.Select(x => x.Register + ":" + string.Join("/", used[x.Register])))}");
+                if (hits.Count == 1)
+                {
+                    chosen[hits[0]] = "$Globals";
+                    r.ConfirmedCb.Add(hits[0]);
+                    r.Notes.Add($"// cb{hits[0]} = $Globals (the compiled layout table covers every row this "
+                                + "program reads, and the parameter blob's members line up with it)");
+                }
+            }
+            foreach (var kv in chosen) r.CbName[kv.Key] = kv.Value;
+            r.RowUse = use;
+            foreach (var d in decls)
+            {
+                if (!r.CbName.TryGetValue(d.Register, out var cbname)) continue;
+                if (BlobTool.IsGlobalsName(cbname))
+                {
+                    r.MapGlobalsRows(d, used[d.Register], props);
+                    continue;
+                }
+                foreach (int row in used[d.Register])
+                {
+                    var m = UnityCbuffers.Find(cbname, row);
+                    bool known = m != null && (r.InTable(m.Name) || r.ConfirmedCb.Contains(d.Register));
+                    string expr = known
+                        ? (m.IsMatrix ? MatrixColumn(m.Name, row - m.Row, m.Rows) : m.Name) : null;
+
+                    if (expr != null && (m.FillsRow || m.IsMatrix) &&
+                        !UnityCbuffers.RowIsShared(cbname, row))
+                    {
+                        r.RowExpr[(d.Register, row)] = expr;
+                        r.RowWidth[(d.Register, row)] = m.IsMatrix ? 4 : m.IsScalar ? 1 : m.IsVector ? 3 : 4;
+                        r.NoteNamed(d.Register, m);
+                        continue;
+                    }
+
+                    int mask = used[d.Register].Count > 0 &&
+                               use.TryGetValue(d.Register, out var rowUse) &&
+                               rowUse.TryGetValue(row, out int rm) ? rm : 0xF;
+                    for (int c = 0; c < 4; c++)
+                    {
+                        if ((mask & (1 << c)) == 0) continue;
+                        var lane = UnityCbuffers.FindLane(cbname, row, c);
+                        if (lane == null || !(r.InTable(lane.Name) || r.ConfirmedCb.Contains(d.Register))) continue;
+                        r.CompExpr[(d.Register, row, c)] = lane.IsMatrix
+                            // Component c of a matrix column is M[<that row>][<column>].
+                            ? $"{lane.Name}[{c - lane.Col}].{"xyzw"[row - lane.Row]}"
+                            : lane.Span == 1 ? lane.Name
+                            : lane.Name + "." + "xyzw"[c - lane.Col];
+                        r.NoteNamed(d.Register, lane);
+                    }
+                }
+                if (!dynamicIndex.Contains(d.Register) &&
+                    used[d.Register].All(row => r.RowFullyNamed(d.Register, row)))
+                    r.FullyMapped.Add(d.Register);
+            }
+
+            r.MapTextures(prog, props, texParams, glslTexNames, blobTexNames);
+
+            if (Environment.GetEnvironmentVariable("SHADERRIP_CBDBG") == "1")
+            {
+                foreach (var d in decls)
+                {
+                    string rows = string.Join(",", used[d.Register]);
+                    string rex = string.Join(" ", r.RowExpr
+                        .Where(k => k.Key.cb == d.Register)
+                        .Select(k => $"r{k.Key.row}={k.Value}"));
+                    string cex = string.Join(" ", r.CompExpr
+                        .Where(k => k.Key.cb == d.Register)
+                        .Select(k => $"r{k.Key.row}.{"xyzw"[k.Key.comp]}={k.Value}"));
+                    Console.Error.WriteLine(
+                        $"[cbdbg] cb{d.Register} name={r.CbName.GetValueOrDefault(d.Register, "?")} "
+                        + $"asset={(r.AssetGlobals == null ? "null" : r.AssetGlobals.Members.Count.ToString())} "
+                        + $"param={(r.ParamCbs == null ? "null" : string.Join("/", r.ParamCbs.Select(c => c.Name + ":" + c.Size + ":" + c.Members.Count + "@" + c.Register)))} "
+                        + $"dcl={d.Count} rows=[{rows}] rowExpr=[{rex}] compExpr=[{cex}] "
+                        + $"names=[{string.Join(",", r._nameTable.OrderBy(x => x, StringComparer.Ordinal))}]");
+                }
+            }
+            // ---- last resort: the program's own compiled member table ----
+            // The parameter blob records the exact members (name, byte offset,
+            // type, dim) of every constant buffer this compile kept.  When the
+            // curated table, the name table and the heuristic routes all missed
+            // a row, its name is still here.  Conservative: only whole-float4
+            // rows are named, so a partial read can never pick up a wrong lane.
+            if (r.ParamCbs != null && r.ParamCbs.Count > 0)
+            {
+                var cbDecls = prog.Decls.Where(d => d.Kind == "cbuffer").ToList();
+                if (cbDecls.Count == r.ParamCbs.Count)
+                {
+                    for (int i = 0; i < cbDecls.Count; i++)
+                    {
+                        var d = cbDecls[i];
+                        var pcb = r.ParamCbs[i];
+                        if (pcb.Members.Count == 0) continue;
+                        if (!used.TryGetValue(d.Register, out var rowsUsed)) continue;
+                        foreach (int row in rowsUsed)
+                        {
+                            var key = (d.Register, row);
+                            if (r.RowExpr.ContainsKey(key) ||
+                                Enumerable.Range(0, 4).Any(c => r.CompExpr.ContainsKey((d.Register, row, c))))
+                                continue;
+                            var mem = pcb.Members.FirstOrDefault(mm => mm.offset == row * 16);
+                            if (string.IsNullOrEmpty(mem.name) || mem.dim != 4) continue;
+                            r.RowExpr[key] = mem.name;
+                            r.RowWidth[key] = 4;
+                            if (!r.GlobalsDecl.TryGetValue((int)d.Register, out var gdecls))
+                                r.GlobalsDecl[(int)d.Register] = gdecls = new List<(string name, string type)>();
+                            if (!gdecls.Any(x => x.name == mem.name))
+                                gdecls.Add((mem.name, "float4"));
+                        }
+                    }
+                }
+            }
+            return r;
+        }
+
+        /// <summary>
+        /// Identify each constant buffer from the program's parameter blob.
+        ///
+        /// The blob lists exactly the buffers this program kept, in register order,
+        /// the asset has confirmed the ordering; it is never used to *drop* a buffer,
+        /// because not every buffer appears in it.
+        ///
+        /// Returns null when the blob is absent, lists a different number of buffers,
+        /// or cannot explain the read extents.
+        /// </summary>
+        private Dictionary<int, string> IdentityFromParamBlob(List<Ast.Decl> decls,
+                                                             Dictionary<int, SortedSet<int>> used)
+        {
+            if (ParamCbs == null || ParamCbs.Count == 0) return null;
+            bool dbg = Environment.GetEnvironmentVariable("SHADERRIP_TMPDBG") == "1";
+
+            // The blob's buffer list is the shader's, not the program's: it keeps a
+            // record for every constant buffer the pass compiled, including the
+            // Unity ones this particular program never declares, and in the asset's
+            // own order.  `MatchBySize` pairs them by the register the asset
+            // recorded where it can, and only falls back to order when there is no
+            // register evidence at all.
+            var pairs = MatchBySize(decls, ParamCbs);
+            if (pairs == null)
+            {
+                if (dbg) Console.Error.WriteLine($"[blobmiss] count {ParamCbs.Count} != dcl {decls.Count}");
+                return null;
+            }
+
+            var res = new Dictionary<int, string>();
+            foreach (var (d, cb) in pairs)
+            {
+                if (cb.Name == null || cb.Size <= 0) return null;
+                if (Math.Max(1, d.Count) * 16 > cb.Size)
+                {
+                    if (dbg) Console.Error.WriteLine($"[blobmiss] cb{d.Register} dcl={d.Count} > {cb.Name}:{cb.Size}");
+                    return null;
+                }
+                res[d.Register] = cb.Name;
+                CbSize[d.Register] = cb.Size;
+                ConfirmedCb.Add(d.Register);
+            }
+
+            if (res.Count == 0) return null;
+
+            if (res.Values.Distinct().Count() != res.Count)
+            {
+                if (dbg) Console.Error.WriteLine("[blobmiss] duplicate buffer names: " + string.Join(",", res.Values));
+                return null;
+            }
+
+            var listed = ParamCbs.Where(c => c.Register >= 0).ToList();
+            if (listed.Count > 0)
+            {
+                bool agrees = listed.All(c => ParamCbs.IndexOf(c) == c.Register);
+                Notes.Add(agrees
+                    ? "// cbuffer order confirmed by the asset's own register index"
+                    : "// cbuffer order taken from the blob's declaration order;"
+                      + " the asset's index list disagrees, so it was ignored");
+            }
+            return res;
+        }
+
+        /// <summary>
+        /// Pair each `dcl_constantbuffer` with the blob record that describes it.
+        ///
+        /// The blob's trailing register map names the slot each buffer was bound
+        /// to (`UnityLighting@2`), and that is the program's own `dcl_constantbuffer`
+        /// register, so it identifies the buffer outright.  Falling back to list
+        /// position is what the old code did for every program whose blob kept a
+        /// buffer the program dropped, and the shift then mislabelled every buffer
+        /// after it -- a 46-row block read as 7 under another buffer's name.
+        /// </summary>
+        private static List<(Ast.Decl d, BlobTool.CbInfo cb)> MatchBySize(
+            List<Ast.Decl> decls, List<BlobTool.CbInfo> cbs)
+        {
+            var res = new List<(Ast.Decl, BlobTool.CbInfo)>(decls.Count);
+
+            // A record smaller than one constant-buffer row is a parse artefact of
+            // the record scan, not a buffer: nothing can be pinned inside it.
+            var real = cbs.Where(c => c.Size >= 16).ToList();
+            if (real.Count == 0) return null;
+            cbs = real;
+
+            // Registers the asset itself recorded come first: they identify a buffer
+            // outright, and equal counts do not make the two lists parallel -- the
+            // blob keeps the pass's buffers in its own order, which need not be the
+            // declaration order.  Anything the map leaves out ($Globals carries no
+            // register) is matched by size afterwards.
+            if (cbs.Any(c => c.Register >= 0))
+            {
+                var used = new HashSet<BlobTool.CbInfo>();
+                var byReg = new Dictionary<int, BlobTool.CbInfo>();
+                foreach (var c in cbs)
+                    if (c.Register >= 0) byReg[c.Register] = c;
+
+                var pending = new List<Ast.Decl>();
+                foreach (var d in decls)
+                {
+                    if (byReg.TryGetValue(d.Register, out var hit) && used.Add(hit))
+                    {
+                        res.Add((d, hit));
+                        continue;
+                    }
+                    pending.Add(d);
+                }
+                foreach (var d in pending)
+                {
+                    int need = Math.Max(1, d.Count) * 16;
+                    var pick = cbs.FirstOrDefault(c => !used.Contains(c) && c.Size >= need);
+                    // No record left that can hold it: this declaration has no entry
+                    // in the blob at all.  Leaving it unnamed is correct; failing the
+                    // whole table would throw away the buffers the map did identify.
+                    if (pick == null) continue;
+                    used.Add(pick);
+                    res.Add((d, pick));
+                }
+                return res;
+            }
+
+            if (decls.Count == cbs.Count)
+            {
+                for (int i = 0; i < decls.Count; i++) res.Add((decls[i], cbs[i]));
+                return res;
+            }
+
+            int at = 0;
+            foreach (var d in decls)
+            {
+                int need = Math.Max(1, d.Count) * 16;
+                while (at < cbs.Count && cbs[at].Size < need) at++;
+                if (at >= cbs.Count) return null;
+                res.Add((d, cbs[at]));
+                at++;
+            }
+            return res;
+        }
+
+        /// <summary>
+        /// Record a Unity-cbuffer member the program actually references, so the
+        /// emitter can declare it when the include does not.
+        /// </summary>
+        private void NoteNamed(int reg, UnityCbuffers.Member m)
+        {
+            if (!GlobalsDecl.TryGetValue(reg, out var list))
+                GlobalsDecl[reg] = list = new List<(string name, string type)>();
+            if (list.Any(x => x.name == m.Name)) return;
+            list.Add((m.Name, UnityCbuffers.TypeOf(m)));
+        }
+
+        /// <summary>cbuffer names the shader's own name table lists.</summary>
+        private List<string> CbufferNamesInTable()
+        {
+            var res = new List<string>();
+            foreach (string n in _nameTable)
+                if (BlobTool.IsGlobalsName(n) || UnityCbuffers.Members.Any(m => m.Cb == n))
+                    res.Add(n);
+            return res.OrderBy(n => BlobTool.IsGlobalsName(n) ? 0 : 1)
+                      .ThenBy(n => UnityCbuffers.Members.FindIndex(m => m.Cb == n))
+                      .ToList();
+        }
+
+        /// <summary>
+        /// Fall back to a register identity another sub-program of the same shader
+        /// already confirmed.
+        ///
+        /// Members like <c>_ZBufferParams</c> leave no name in the compiled program, so
+        /// the name table cannot place them and the bijection gives up on the whole
+        /// buffer.  But identity is stable within one shader, and a sibling variant
+        /// usually confirms it -- so the identity is copied and the rows are named from
+        /// the layout, as long as every row read falls inside it.
+        /// </summary>
+        private void AssignFromSiblingHint(List<Ast.Decl> decls,
+                                           Dictionary<int, SortedSet<int>> used,
+                                           Dictionary<int, string> chosen,
+                                           Dictionary<int, string> hint)
+        {
+            if (hint == null || hint.Count == 0) return;
+            foreach (var d in decls)
+            {
+                if (chosen.ContainsKey(d.Register)) continue;
+                if (!hint.TryGetValue(d.Register, out var name)) continue;
+                if (chosen.ContainsValue(name)) continue;
+                if (BlobTool.IsGlobalsName(name) || UnityCbuffers.RowCount(name) <= 0) continue;
+                if (used[d.Register].Any(r => UnityCbuffers.Find(name, r) == null)) continue;
+
+                chosen[d.Register] = name;
+                ConfirmedCb.Add(d.Register);
+                Notes.Add($"// cb{d.Register} = {name} (identity from a sibling variant of this shader)");
+            }
+        }
+
+        /// <summary>
+        /// Exhaustive assignment of cbuffer registers to candidate names.  A Unity
+        /// cbuffer is only allowed when every row the program reads from that
+        /// register sits on a member whose name the shader itself references;
+        /// $Globals always fits (its layout is not knowable) and scores 0.
+        /// </summary>
+        private Dictionary<int, string> AssignBijection(List<Ast.Decl> decls,
+                                                        Dictionary<int, SortedSet<int>> used,
+                                                        List<string> candidates)
+        {
+            var best = new Dictionary<int, string>();
+            int bestScore = -1;
+
+            void Search(int idx, HashSet<string> taken, Dictionary<int, string> cur, int score)
+            {
+                if (idx == decls.Count)
+                {
+                    if (score > bestScore || (score == bestScore && cur.Count > best.Count))
+                    {
+                        bestScore = score;
+                        best = new Dictionary<int, string>(cur);
+                    }
+                    return;
+                }
+                var d = decls[idx];
+                Search(idx + 1, taken, cur, score);
+
+                foreach (string c in candidates)
+                {
+                    if (taken.Contains(c)) continue;
+                    int s = Score(c, used[d.Register]);
+                    if (s < 0) continue;
+                    taken.Add(c); cur[d.Register] = c;
+                    Search(idx + 1, taken, cur, score + s);
+                    cur.Remove(d.Register); taken.Remove(c);
+                }
+            }
+
+            Search(0, new HashSet<string>(), new Dictionary<int, string>(), 0);
+            return best;
+        }
+
+        /// <summary>
+        /// Rows <c>$Globals</c> can hold, from the byte size the asset records for
+        /// it, or -1 when no size is available.  Without this bound the fallback
+        /// assignment happily parks <c>$Globals</c> on a register whose reads run
+        /// to row 46, which is how a 11-row block ended up named on the wrong
+        /// register and its real rows stayed numeric.
+        /// </summary>
+        private int GlobalsRowCount()
+        {
+            int size = 0;
+            var g = ParamCbs?.FirstOrDefault(c => BlobTool.IsGlobalsName(c.Name));
+            if (g != null) size = g.Size;
+            if (AssetGlobals != null) size = Math.Max(size, AssetGlobals.Size);
+            return size > 0 ? (size + 15) / 16 : -1;
+        }
+
+        /// <summary>
+        /// Byte size of this program's own <c>$Globals</c>: the parameter blob
+        /// records it per program, and that is what distinguishes keyword
+        /// variants that packed the same properties differently (272 B vs 288 B
+        /// in one commercial game's MergeSprite).  The asset reflection keeps only one copy.
+        /// </summary>
+        private int GlobalsSize()
+        {
+            var g = ParamCbs?.FirstOrDefault(c => BlobTool.IsGlobalsName(c.Name));
+            if (g != null && g.Size > 0) return g.Size;
+            return AssetGlobals?.Size ?? -1;
+        }
+
+        /// <summary>Confirmed-row count, or -1 when the candidate cannot explain the reads.</summary>
+        private int Score(string cb, SortedSet<int> rows)
+        {
+            if (BlobTool.IsGlobalsName(cb))
+            {
+                int n = GlobalsRowCount();
+                if (n > 0 && rows.Count > 0 && rows.Max() >= n) return -100;
+                if (!InTable("$Globals")) return 0;
+                return 1 + (rows.Count > 0 && rows.Max() >= 24 ? 2 : 0);
+            }
+            int hits = 0;
+            foreach (int row in rows)
+            {
+                var m = UnityCbuffers.Find(cb, row);
+                if (m == null) return -1;
+                if (!InTable(m.Name)) return -1;
+                hits++;
+            }
+            return rows.Count == 0 ? 0 : hits;
+        }
+
+        /// <summary>
+        /// One register of a matrix holds a COLUMN, not a row: D3D packs matrices
+        /// column-major, so cbuffer row R of a float4x4 is M[0..3][R].  Reading it as
+        /// M[R] transposes the matrix.  The expression is parenthesised so a lane can
+        /// still be taken from it, since swizzling a swizzle is not legal.
+        /// </summary>
+        private static string MatrixColumn(string name, int k, int rows)
+        {
+            var sb = new System.Text.StringBuilder("(").Append(name).Append('.');
+            for (int r = 0; r < rows; r++) sb.Append("_m").Append(r).Append(k);
+            return sb.Append(')').ToString();
+        }
+
+        private bool MapGlobalsFromAssetReflection(Ast.Decl d, SortedSet<int> rows, bool fillOnly = false)
+        {
+            var cb = AssetGlobals;
+            if (cb == null || cb.Members.Count == 0) return false;
+
+            // In fillOnly mode this table supplements the compiled member table
+            // instead of replacing it: it may only add rows the other left
+            // nameless, and only declare members not already declared.  The two
+            // disagree in both directions -- this shader's parameter blob omits
+            // _LightColor0, while the asset reflection knows _EnvMatrix is a
+            // matrix spanning rows 13..16 where the blob only sees row 13 -- so
+            // neither table alone covers the block.
+            bool RowTaken(int row) =>
+                RowExpr.ContainsKey((d.Register, row)) ||
+                Enumerable.Range(0, 4).Any(c => CompExpr.ContainsKey((d.Register, row, c)));
+            bool Declared(string name) =>
+                GlobalsDecl.TryGetValue((int)d.Register, out var g) && g.Any(x => x.name == name);
+
+            int mapped = 0;
+            var decls = new List<(string name, string type)>();
+            var members = cb.Members.OrderBy(x => x.Offset).ToList();
+            if (Environment.GetEnvironmentVariable("SHADERRIP_CBDBG") == "1")
+                Console.Error.WriteLine($"[cbasset] size={cb.Size} members=" +
+                    string.Join(" ", members.Select(x => $"{x.Name}@{x.Offset}({(x.IsMatrix ? "M" + x.RowCount : "d" + x.Dim)})")));
+            for (int mi = 0; mi < members.Count; mi++)
+            {
+                var m = members[mi];
+                if (string.IsNullOrEmpty(m.Name)) continue;
+                if (m.Offset % 4 != 0) continue;
+                int row = m.Offset / 16;
+                int col = (m.Offset % 16) / 4;
+
+                // A matrix member spans several rows, and a stage rarely reads all
+                // of them: one light variant samples _EnvMatrix rows 14 and 15 but
+                // never row 13.  Requiring the member's first row to be read threw
+                // the whole matrix away for such a stage, so its rows stayed bare
+                // cb0[14]/cb0[15].  Coverage is therefore decided per row, below.
+                //
+                // Whether a member is a matrix is answered by the asset's own
+                // reflection (IsMatrix/RowCount); the old name list is gone because
+                // a name only says "this is probably a matrix", while the reflection
+                // says so per member and per compile.
+                if (col == 0 && !m.IsMatrix && IsDeclaredMatrix(m.Name))
+                {
+                    int next = mi + 1 < members.Count ? members[mi + 1].Offset : cb.Size;
+                    int n = (next - m.Offset) / 16;
+                    if (n is >= 2 and <= 4)
+                    {
+                        int used = 0;
+                        for (int k = 0; k < n; k++)
+                        {
+                            if (!rows.Contains(row + k)) continue;
+                            if (fillOnly && RowTaken(row + k)) continue;
+                            RowExpr[(d.Register, row + k)] = MatrixColumn(m.Name, k, n);
+                            RowWidth[(d.Register, row + k)] = 4;
+                            used++;
+                        }
+                        if (used == 0) continue;
+                        if (!fillOnly || !Declared(m.Name))
+                            decls.Add((m.Name, n == 2 ? "float2x2" : n == 3 ? "float3x3" : "float4x4"));
+                        mapped++;
+                        continue;
+                    }
+                }
+
+                if (m.IsMatrix)
+                {
+                    if (col != 0) continue;
+                    int n = Math.Max(1, m.RowCount);
+                    int used = 0;
+                    for (int k = 0; k < n; k++)
+                    {
+                        if (!rows.Contains(row + k)) continue;
+                        if (fillOnly && RowTaken(row + k)) continue;
+                        RowExpr[(d.Register, row + k)] = MatrixColumn(m.Name, k, n);
+                        RowWidth[(d.Register, row + k)] = 4;
+                        used++;
+                    }
+                    if (used == 0) continue;
+                    if (!fillOnly || !Declared(m.Name))
+                        decls.Add((m.Name, n == 2 ? "float2x2" : n == 3 ? "float3x3" : "float4x4"));
+                    mapped++;
+                    continue;
+                }
+
+                if (!rows.Contains(row)) continue;
+                int w = m.Dim switch { 4 => 4, 3 => 3, 2 => 2, _ => 1 };
+                if (m.ArraySize > 1) w = 4;
+                if (col + w > 4) continue;
+
+                // Always float, even when the reflection says the member is an int
+                // (type 1) and the code around it converts with itof.  Unity uploads
+                // a ShaderLab Float property as float bits; declaring the member int
+                // makes the shader read those bits as an integer -- _NumVerts = 352
+                // arrives as 1135616 and the ribbon collapses.  Declaring float keeps
+                // the emitted float(x) a no-op cast, which is what the GLSL backend's
+                // own reconstruction does and what the shader needs to run.
+                string scalar = "float";
+                string Ty(int n) => n == 1 ? scalar : scalar + (n == 2 ? "2" : n == 3 ? "3" : "4");
+
+                if (w == 4 && col == 0)
+                {
+                    if (fillOnly && RowTaken(row)) continue;
+                    RowExpr[(d.Register, row)] = m.Name;
+                    RowWidth[(d.Register, row)] = 4;
+                    if (!fillOnly || !Declared(m.Name)) decls.Add((m.Name, Ty(4)));
+                }
+                else
+                {
+                    bool any = false;
+                    for (int k = 0; k < w; k++)
+                    {
+                        if (fillOnly && CompExpr.ContainsKey((d.Register, row, col + k))) continue;
+                        CompExpr[(d.Register, row, col + k)] =
+                            w == 1 ? m.Name : m.Name + "." + "xyzw"[k];
+                        any = true;
+                    }
+                    if (!any) continue;
+                    if (!fillOnly || !Declared(m.Name)) decls.Add((m.Name, Ty(w)));
+                }
+                mapped++;
+            }
+
+            if (mapped == 0) return false;
+            if (fillOnly && GlobalsDecl.TryGetValue((int)d.Register, out var exist))
+            {
+                var have = new HashSet<string>(exist.Select(x => x.name), StringComparer.Ordinal);
+                exist.AddRange(decls.Where(x => have.Add(x.name)));
+            }
+            else GlobalsDecl[(int)d.Register] = decls;
+            if (rows.All(r => RowFullyNamed(d.Register, r)) && !_dynamicIndex.Contains(d.Register))
+                FullyMapped.Add(d.Register);
+            Notes.Add($"// $Globals cb{d.Register}: {mapped} member(s) named from the asset's own "
+                      + $"constant-buffer reflection ({cb.Size} bytes)");
+            return true;
+        }
+
+        private bool MapGlobalsFromParamBlob(Ast.Decl d, SortedSet<int> rows, IReadOnlyList<Property> props)
+        {
+            var source = AllParamCbs ?? ParamCbs;
+            var all = source?.Where(x => BlobTool.IsGlobalsName(x.Name) && x.Members.Count > 0).ToList();
+            if (all == null || all.Count == 0) return false;
+
+            int need = d.Count > 0 ? d.Count * 16 : (rows.Count > 0 ? (rows.Max() + 1) * 16 : 0);
+            var pool = all.Where(x => x.Size >= need).ToList();
+            if (pool.Count == 0) pool = all;
+
+            // The program's own `$Globals` is the first choice: its identity pass
+            // recorded that size, and a table of a different size describes a
+            // different packing of the same properties, with every member after the
+            // first discrepancy at another offset.  Only when this program kept no
+            // size -- or its own table cannot hold the declaration -- does the
+            // search widen to the neighbouring sizes.
+            if (CbSize.TryGetValue((int)d.Register, out int own) && own > 0)
+            {
+                var exact = pool.Where(x => x.Size == own).ToList();
+                if (exact.Count > 0) pool = exact;
+            }
+
+            // Several programs of one pass compile to the same $Globals size but
+            // record different subsets of members (a 624-byte block appears with
+            // 16, 23 and 36 members).  Picking the first by size alone can land on
+            // the 16-member one, which has no _EnvMatrix and therefore no way to
+            // learn that rows 18/19 belong to it.  Same size, richest table.
+            var cb = pool.OrderBy(x => x.Size).ThenByDescending(x => x.Members.Count).First();
+
+            var seenOffsets = new HashSet<int>();
+            var merged = new List<(string name, int offset, int dim)>();
+            foreach (var c in all.Where(x => x.Size == cb.Size).OrderByDescending(x => x.Members.Count))
+                foreach (var m in c.Members)
+                    if (seenOffsets.Add(m.offset)) merged.Add((m.name, m.offset, m.dim));
+
+            var propWidth = new Dictionary<string, int>(StringComparer.Ordinal);
+            if (props != null)
+                foreach (var p in props)
+                    propWidth[p.Name] = p.Type is 0 or 1 ? 4 : 1;
+            foreach (var p in props ?? new List<Property>())
+                if (TextureTypes.Contains(p.Type)) propWidth[p.Name + "_ST"] = 4;
+
+            var ordered = merged.OrderBy(m => m.offset).ToList();
+            if (Environment.GetEnvironmentVariable("SHADERRIP_CBDBG") == "1")
+                Console.Error.WriteLine($"[cbparam] size={cb.Size} merged={ordered.Count} members=" +
+                    string.Join(" ", ordered.Select(x => $"{x.name}@{x.offset}(d{x.dim})")));
+            int Width(string name, int index)
+            {
+                int start = ordered[index].offset;
+                int next = index + 1 < ordered.Count ? ordered[index + 1].offset : cb.Size;
+                int span = Math.Max(0, next - start);
+                int room = 4 - (start % 16) / 4;
+                int bySpan = span >= 16 ? 4 : span >= 12 ? 3 : span >= 8 ? 2 : 1;
+                int w = ordered[index].dim is >= 1 and <= 4 ? ordered[index].dim : bySpan;
+                w = Math.Min(w, room);
+                if (propWidth.TryGetValue(name, out int pw)) w = Math.Min(w, pw);
+                return Math.Max(1, w);
+            }
+
+            bool RowTaken(int row) =>
+                RowExpr.ContainsKey((d.Register, row)) ||
+                Enumerable.Range(0, 4).Any(c => CompExpr.ContainsKey((d.Register, row, c)));
+            bool Declared(string name) =>
+                GlobalsDecl.TryGetValue((int)d.Register, out var gd) && gd.Any(x => x.name == name);
+
+            int mapped = 0;
+            var decls = new List<(string name, string type)>();
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                var (mname, moff, mdim) = ordered[i];
+                int row = moff / 16;
+                if (moff % 4 != 0) continue;
+                if (!rows.Contains(row)) continue;
+                int col = (moff % 16) / 4;
+
+                // Whether a member is a matrix is a property of the shader, not of
+                // this variant's buffer: _EnvMatrix is float4x4 everywhere, even
+                // though the 624-byte layout of the additive-light variants puts it
+                // at a different offset than the 560-byte one.  The asset's own
+                // reflection records that fact, so consult it before falling back to
+                // span arithmetic, which cannot recognise a member whose neighbours
+                // are far away (here _EnvMatrix is 176 bytes from the next member and
+                // was therefore read as a single float4, leaving its other rows bare).
+                int declaredRows = 0;
+                if (MatrixRows != null) MatrixRows.TryGetValue(mname, out declaredRows);
+                if (declaredRows == 0 && AssetGlobals != null)
+                    foreach (var am in AssetGlobals.Members)
+                        if (am.Name == mname && am.IsMatrix) { declaredRows = Math.Max(declaredRows, am.RowCount); break; }
+                if (col == 0 && (declaredRows is >= 2 and <= 4 || IsDeclaredMatrix(mname)))
+                {
+                    int span = (i + 1 < ordered.Count ? ordered[i + 1].offset : cb.Size) - moff;
+                    // A name the engine table knows to be a matrix is four rows wide
+                    // even when the next member sits far away: `unity_MatrixVP` is the
+                    // last thing in this buffer, so span arithmetic called it 51 rows
+                    // and gave up, leaving the other three rows unnamed -- and the
+                    // body then read `unity_MatrixVP.xyzw`, which is not a swizzle a
+                    // float4x4 has ("invalid subscript 'xyzw'").
+                    int n = declaredRows is >= 2 and <= 4 ? declaredRows
+                          : IsDeclaredMatrix(mname) ? 4
+                          : (span >= 32 ? span / 16 : 0);
+                    if (n is >= 2 and <= 4)
+                    {
+                        int used = 0;
+                        for (int k = 0; k < n; k++)
+                        {
+                            if (!rows.Contains(row + k)) continue;
+                            if (RowTaken(row + k)) continue;
+                            RowExpr[(d.Register, row + k)] = MatrixColumn(mname, k, n);
+                            RowWidth[(d.Register, row + k)] = 4;
+                            used++;
+                        }
+                        if (used > 0)
+                        {
+                            if (!Declared(mname))
+                                decls.Add((mname, n == 2 ? "float2x2" : n == 3 ? "float3x3" : "float4x4"));
+                            mapped++;
+                            continue;
+                        }
+                    }
+                }
+
+                int w = Width(mname, i);
+                if (col + w > 4) continue;
+
+                if (w == 4 && col == 0)
+                {
+                    RowExpr[(d.Register, row)] = mname;
+                    RowWidth[(d.Register, row)] = 4;
+                    decls.Add((mname, "float4"));
+                }
+                else
+                {
+                    for (int k = 0; k < w; k++)
+                        CompExpr[(d.Register, row, col + k)] =
+                            w == 1 ? mname : mname + "." + "xyzw"[k];
+                    decls.Add((mname, w == 1 ? "float" : w == 2 ? "float2" : "float3"));
+                }
+                mapped++;
+            }
+
+            if (mapped == 0) return false;
+            GlobalsDecl[(int)d.Register] = decls;
+            if (rows.All(r => RowFullyNamed(d.Register, r)) && !_dynamicIndex.Contains(d.Register))
+                FullyMapped.Add(d.Register);
+            Notes.Add($"// $Globals cb{d.Register}: {mapped} slot(s) named from the compiled "
+                      + "constant-buffer member table");
+            return true;
+        }
+
+        /// <summary>
+        /// $Globals holds the material properties.  Their packing order inside the
+        /// block is decided by fxc and is not recorded anywhere, so a row is only
+        /// labelled when the assignment is forced: the number of named float4-sized
+        /// properties must equal the number of rows the program actually reads.
+        /// Scalar (Float/Range/Int) properties share a slot with their neighbours,
+        /// so they are never used to name a whole row.
+        /// </summary>
+        private void MapGlobalsRows(Ast.Decl d, SortedSet<int> rows, IReadOnlyList<Property> props)
+        {
+            if (Environment.GetEnvironmentVariable("SHADERRIP_CBDBG") == "1")
+                Console.Error.WriteLine("[mgr] enter cb" + d.Register);
+            if (rows.Count == 0) return;
+
+            int blobGlobalsSize = ParamCbs?.FirstOrDefault(c => BlobTool.IsGlobalsName(c.Name))?.Size ?? 0;
+            int blobSpan = 0;
+            if (ParamCbs != null)
+                foreach (var c in ParamCbs.Where(x => BlobTool.IsGlobalsName(x.Name)))
+                    foreach (var m in c.Members)
+                        blobSpan = Math.Max(blobSpan, m.offset + Math.Max(1, m.dim) * 4);
+            bool assetUsable = AssetGlobals != null && AssetGlobals.Members.Count > 0 &&
+                               (blobGlobalsSize <= 0 || blobGlobalsSize == AssetGlobals.Size) &&
+                               AssetGlobals.Size >= (d.Count > 0 ? d.Count * 16 : 0) &&
+                               AssetGlobals.Size >= blobSpan;
+            bool fromBlob = MapGlobalsFromParamBlob(d, rows, props);
+            // The two tables are complementary, not alternatives: whichever one
+            // ran first, the asset reflection still fills the rows it left
+            // nameless (it knows _LightColor0 and the true extent of matrix
+            // members).  Without this the parameter blob alone decides, and its
+            // omissions surface as bare cb0[2] / cb0[14] references.
+            bool fromAsset = assetUsable &&
+                             (fromBlob ? MapGlobalsFromAssetReflection(d, rows, fillOnly: true)
+                                       : MapGlobalsFromAssetReflection(d, rows));
+
+
+            bool fromTmp = ApplyTmpLayout(d, rows);
+
+            bool fromShape = ApplyClipRectShape(d, rows);
+
+            if (fromAsset || fromBlob || fromTmp || fromShape)
+            {
+                if (!_dynamicIndex.Contains(d.Register) && rows.All(r => RowFullyNamed(d.Register, r)))
+                    FullyMapped.Add(d.Register);
+                return;
+            }
+
+            var named = NamedGlobals(props);
+
+            if (named.Count != rows.Count)
+            {
+                return;
+            }
+            var ordered = rows.OrderBy(x => x).ToList();
+            for (int i = 0; i < ordered.Count; i++)
+                RowExpr[(d.Register, ordered[i])] = named[i];
+            GlobalsDecl[(int)d.Register] = named.Select(n => (n, "float4")).ToList();
+            FullyMapped.Add(d.Register);
+            Notes.Add($"// $Globals cb{d.Register}: rows mapped in property declaration order ["
+                      + string.Join(", ", named) + "]");
+        }
+
+        /// <summary>
+        /// Two spellings of the same member: <c>_EnvMatrix</c> and <c>_EnvMatrix[0]</c>
+        /// both denote the matrix's first row.  Conflict detection only cares whether
+        /// two names denote the same member, so a spelling difference is not a conflict.
+        /// </summary>
+        private static bool SameMember(string a, string b)
+        {
+            if (a == b) return true;
+            string Base(string s)
+            {
+                int i = s.IndexOf('[');
+                return i > 0 ? s.Substring(0, i) : s;
+            }
+            if (Base(a) != Base(b)) return false;
+            return a == Base(a) && b == Base(b) + "[0]"
+                || b == Base(b) && a == Base(a) + "[0]";
+        }
+
+        /// <summary>
+        /// "Name -> byte offset" anchors for <c>$Globals</c> members, from the parameter
+        /// blob and the asset reflection.  Used to confirm a layout table was picked
+        /// correctly when the name-table intersection is thin (see
+        /// <see cref="TmpLayouts.Match"/>).
+        /// </summary>
+        private Dictionary<string, int> TmpAnchors()
+        {
+            var a = new Dictionary<string, int>(StringComparer.Ordinal);
+            if (ParamCbs != null)
+                foreach (var c in ParamCbs.Where(x => BlobTool.IsGlobalsName(x.Name)))
+                    foreach (var (n, o, _, _) in c.Members)
+                        if (!string.IsNullOrEmpty(n)) a[n] = o;
+            if (AssetGlobals != null)
+                foreach (var m in AssetGlobals.Members)
+                    if (!string.IsNullOrEmpty(m.Name)) a[m.Name] = m.Offset;
+            return a;
+        }
+
+        /// <summary>
+        /// Recover row numbers from the per-shader <c>$Globals</c> layout table (see
+        /// <see cref="TmpLayouts"/>).
+        ///
+        /// The table comes from really compiling Unity's CGIncludes, so nothing is
+        /// inferred here: a table is selected by <c>dcl</c> row count, must share enough
+        /// member names with the program's name table, and must cover every row the
+        /// program reads.  Rows already named are left alone, and any conflict drops the
+        /// whole table -- a conflict is exactly the sign that this table does not apply.
+        /// </summary>
+        private bool ApplyTmpLayout(Ast.Decl d, SortedSet<int> rows)
+        {
+            if (!TmpLayouts.Enabled) return false;
+            var map = TmpLayouts.Match(d.Count, _nameTable, rows, out var layout, TmpAnchors());
+            if (map == null && _layoutHint != null)
+            {
+                map = TmpLayouts.MapFrom(_layoutHint, d.Count, rows);
+                layout = map != null ? _layoutHint : null;
+            }
+            if (map == null || map.Count == 0)
+            {
+                if (Environment.GetEnvironmentVariable("SHADERRIP_TMPDBG") == "1")
+                    Console.Error.WriteLine($"[tmpmiss] cb{d.Register} dcl={d.Count} "
+                        + $"table={TmpLayouts.DebugWhy(d.Count, _nameTable, rows)} reads=[{string.Join(",", rows)}]");
+                return false;
+            }
+
+            int reg = d.Register;
+            foreach (var kv in map)
+            {
+                int row = kv.Key.Item1, col = kv.Key.Item2;
+                if (!rows.Contains(row)) continue;
+                var (expr, comps) = kv.Value;
+                if (RowExpr.TryGetValue((reg, row), out var have) && !SameMember(have, expr))
+                {
+                    if (Environment.GetEnvironmentVariable("SHADERRIP_CBDBG") == "1")
+                        Console.Error.WriteLine($"[tmpconflict] r{row} have={have} calc={expr}");
+                    return false;
+                }
+                if (col == 0 && comps == 4) continue;
+                for (int k = 0; k < comps; k++)
+                    if (CompExpr.TryGetValue((reg, row, col + k), out var haveLane) &&
+                        !SameMember(haveLane, comps == 1 ? expr : expr + "." + "xyzw"[k]))
+                    {
+                        if (Environment.GetEnvironmentVariable("SHADERRIP_CBDBG") == "1")
+                            Console.Error.WriteLine($"[tmpconflict] r{row}.{k} have={haveLane} calc={expr}");
+                        return false;
+                    }
+            }
+
+            var decls = GlobalsDecl.TryGetValue(reg, out var prior)
+                ? new List<(string, string)>(prior) : new List<(string, string)>();
+            var types = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (layout != null)
+                foreach (var m in layout.Members) types[m.Name] = m.Type;
+            int named = 0;
+            foreach (var kv in map.OrderBy(k => k.Key.Item1).ThenBy(k => k.Key.Item2))
+            {
+                int row = kv.Key.Item1, col = kv.Key.Item2;
+                if (!rows.Contains(row)) continue;
+                var (expr, comps) = kv.Value;
+                bool wrote = false;
+                if (col == 0 && comps == 4 &&
+                    (!RowExpr.TryGetValue((reg, row), out var prev) || SameMember(prev, expr)))
+                {
+                    RowExpr[(reg, row)] = expr;
+                    RowWidth[(reg, row)] = 4;
+                    wrote = true;
+                }
+                else if (col != 0 || comps != 4)
+                {
+                    for (int k = 0; k < comps; k++)
+                        if (CompExpr.TryAdd((reg, row, col + k),
+                                comps == 1 ? expr : expr + "." + "xyzw"[k])) wrote = true;
+                }
+                if (!wrote) continue;
+                string nm = expr.Contains('[') ? expr.Substring(0, expr.IndexOf('[')) : expr;
+                string ty = types.TryGetValue(nm, out var t0) ? t0
+                    : comps == 1 ? "float" : comps == 2 ? "float2" : comps == 3 ? "float3" : "float4";
+                int at = decls.FindIndex(x => x.Item1 == nm);
+                if (at < 0) decls.Add((nm, ty));
+                else if (decls[at].Item2 != ty) decls[at] = (nm, ty);
+                named++;
+            }
+
+            if (named == 0) return false;
+            if (Environment.GetEnvironmentVariable("SHADERRIP_TMPDBG") == "1")
+                Console.Error.WriteLine($"[tmp] reg={reg} layout={layout.Rows}r map={map.Count} "
+                    + $"reads=[{string.Join(",", rows)}] wrote={named} "
+                    + $"miss=[{string.Join(",", rows.Where(r => !RowFullyNamed(reg, r)))}]");
+            GlobalsDecl[reg] = decls;
+            if (rows.All(r => RowFullyNamed(reg, r)) && !_dynamicIndex.Contains(reg))
+                FullyMapped.Add(reg);
+            ChosenLayout = layout;
+            Notes.Add($"// $Globals cb{reg}: {named} slot(s) named from the compiled layout table "
+                      + $"(tools/gen_tmp_layout.py, {layout.Bytes} bytes / {layout.Rows} rows: {layout.Source})");
+            return true;
+        }
+
+        /// <summary>
+        /// Recognise <c>_ClipRect</c> from the instruction shapes alone.
+        ///
+        /// Unity's UI shaders clip with <c>float4 _ClipRect</c>: <c>.xy</c> is the
+        /// minimum, <c>.zw</c> the maximum, and the four components are each compared
+        /// with <c>ge</c> against the same coordinate.  Nothing else in a UI shader
+        /// produces that shape, and <c>_ClipRect</c> is usually in neither the
+        /// Properties block nor the asset reflection, so this is the only way back.
+        /// Only the "z/w on the left, x/y on the right" form is accepted.
+        /// </summary>
+        private bool ApplyClipRectShape(Ast.Decl d, SortedSet<int> rows)
+        {
+            if (_prog == null) return false;
+
+            var lhs = new Dictionary<int, HashSet<char>>();
+            var rhs = new Dictionary<int, HashSet<char>>();
+            void Mark(Operand o, Dictionary<int, HashSet<char>> side)
+            {
+                if (o == null || o.Kind != Ast.RegKind.Cb || o.Index != d.Register || o.Row < 0) return;
+                if (rows == null || !rows.Contains(o.Row)) return;
+                if (!side.TryGetValue(o.Row, out var set)) side[o.Row] = set = new HashSet<char>();
+                string sw = string.IsNullOrEmpty(o.Swizzle) ? "x" : o.Swizzle;
+                foreach (char c in sw) set.Add(c);
+            }
+
+            foreach (var ins in _prog.Code)
+            {
+                if (ins.Opcode != "ge" || ins.Args.Count < 3) continue;
+                Mark(ins.Args[1], lhs);
+                Mark(ins.Args[2], rhs);
+            }
+
+            int named = 0;
+            foreach (var row in rows)
+            {
+                if (RowExpr.ContainsKey((d.Register, row)) ||
+                    Enumerable.Range(0, 4).Any(c => CompExpr.ContainsKey((d.Register, row, c))))
+                    continue;
+                if (!lhs.TryGetValue(row, out var l) || !rhs.TryGetValue(row, out var r)) continue;
+                if (!(l.Contains('z') && l.Contains('w') && r.Contains('x') && r.Contains('y'))) continue;
+
+                RowExpr[(d.Register, row)] = "_ClipRect";
+                RowWidth[(d.Register, row)] = 4;
+                if (!GlobalsDecl.TryGetValue((int)d.Register, out var decls))
+                    GlobalsDecl[(int)d.Register] = decls = new List<(string name, string type)>();
+                if (!decls.Any(x => x.name == "_ClipRect")) decls.Add(("_ClipRect", "float4"));
+                named++;
+            }
+
+            if (named > 0)
+                Notes.Add("// $Globals: named _ClipRect from the UI min/max rect comparison pattern");
+            return named > 0;
+        }
+
+
+        /// <summary>Material properties that live in $Globals (textures do not).</summary>
+        private List<string> NamedGlobals(IReadOnlyList<Property> props)
+        {
+            var res = new List<string>();
+            if (props == null) return res;
+            foreach (var p in props)
+            {
+                if (TextureTypes.Contains(p.Type))
+                {
+                    string st = p.Name + "_ST";
+                    if (_nameTable.Contains(st)) res.Add(st);
+                    continue;
+                }
+                if ((p.Type == 0 || p.Type == 1) && _nameTable.Contains(p.Name)) res.Add(p.Name);
+            }
+            return res;
+        }
+
+        /// <summary>Give sampler registers the property name they belong to.</summary>
+        /// <remarks>
+        /// Priority: the shader's own GLSL source (GL-family variants keep the
+        /// sampler names in <c>UNITY_LOCATION(n) uniform sampler2D</c> lines where
+        /// the DXBC payload strips them; GL locations and DXBC texture registers
+        /// follow the same property order, so location N names tN); then the
+        /// asset's own <c>m_TextureParams</c> reflection (name + t# register
+        /// straight out of the serialized program parameters); then, only when no
+        /// GLSL source exists, the main-texture convention (<c>[MainTexture]</c>
+        /// attribute, else the literal <c>_MainTex</c> -- the rule
+        /// <c>Material.mainTexture</c> documents, applied as an explicit guess,
+        /// never as an engine answer); then property declaration order.  Property
+        /// order is NOT register order: one commercial title's FloorMesh declares _TileTex first but
+        /// binds it to t2, which silently swapped three samplers and broke the look.
+        /// </remarks>
+        private IEnumerable<(int reg, string name)> InferTextureNames(Ast.Module prog, List<string> properties)
+        {
+            var cubes = prog.Decls.Where(d => d.Kind == "texture" && d.Dimension == 4)
+                                  .Select(d => d.Register).ToHashSet();
+            var volumes = prog.Decls.Where(d => d.Kind == "texture" && d.Dimension == 3)
+                                    .Select(d => d.Register).ToHashSet();
+            var lightmapSamples = new Dictionary<int, Instruction>();
+            for (int i = 0; i < prog.Code.Count; i++)
+            {
+                var sample = prog.Code[i];
+                if (sample.Opcode is not ("sample" or "sample_b" or "sample_d" or "sample_l") ||
+                    sample.Args.Count < 4 || sample.Args[2].Kind != RegKind.T) continue;
+
+                int register = sample.Args[2].Index;
+                foreach (var binding in InferLightmapNames(prog, i, sample, lightmapSamples))
+                    yield return binding;
+                if (volumes.Contains(register))
+                    for (int j = i - 1; j >= Math.Max(0, i - 8); j--)
+                    {
+                        var scale = prog.Code[j];
+                        if (scale.Opcode == "mul" && scale.Args.Skip(1).Any(operand =>
+                            operand.Kind == RegKind.Cb &&
+                            (RowExpr.GetValueOrDefault((operand.Index, operand.Row)) == "unity_ProbeVolumeSizeInv" ||
+                             CompExpr.GetValueOrDefault((operand.Index, operand.Row, 0)) == "unity_ProbeVolumeSizeInv.x")))
+                        {
+                            yield return (register, "unity_ProbeVolumeSH");
+                            break;
+                        }
+                    }
+                if (i > 0 && properties.Count > 0)
+                {
+                    var transform = prog.Code[i - 1];
+                    var uv = sample.Args[1];
+                    if (transform.Opcode == "mad" && !transform.Saturate && transform.Args.Count == 4 &&
+                        transform.Args[0].Swizzle == ".xy" && SameTemp(transform.Args[0], uv) &&
+                        uv.Swizzle?.StartsWith(".xy", StringComparison.Ordinal) == true)
+                    {
+                        var offset = transform.Args[3];
+                        string member = ConstantMember(offset, ".zw");
+                        if (member?.EndsWith("_ST", StringComparison.Ordinal) == true &&
+                            (IsScale(transform.Args[1], offset) || IsScale(transform.Args[2], offset)) &&
+                            properties.Contains(member[..^3]))
+                            yield return (register, member[..^3]);
+                    }
+                }
+
+                // DecodeHDR starts with 1 + decode.w * (sample.a - 1).
+                if (sample.Opcode != "sample_l" || !cubes.Contains(register) || i + 2 >= prog.Code.Count)
+                    continue;
+                var add = prog.Code[i + 1];
+                var mad = prog.Code[i + 2];
+                if (add.Opcode != "add" || add.Args.Count != 3 || add.Saturate ||
+                    mad.Opcode != "mad" || mad.Args.Count != 4 || mad.Saturate ||
+                    sample.Args[0].Swizzle is not (null or ".xyzw") ||
+                    sample.Args[2].Swizzle is not (null or ".xyzw") ||
+                    !SameTemp(sample.Args[0], add.Args[1]) || add.Args[1].Swizzle != ".w" ||
+                    !IsLiteral(add.Args[2], -1) || !IsLiteral(mad.Args[3], 1) ||
+                    add.Args[0].Swizzle?.Length != 2) continue;
+
+                for (int factor = 1; factor <= 2; factor++)
+                {
+                    var alpha = mad.Args[3 - factor];
+                    if (!SameTemp(add.Args[0], alpha) || add.Args[0].Swizzle != alpha.Swizzle) continue;
+                    string member = ConstantMember(mad.Args[factor], ".w");
+                    if (member is "unity_SpecCube0_HDR" or "unity_SpecCube1_HDR")
+                        yield return (register, member[..^4]);
+                }
+            }
+        }
+
+        private IEnumerable<(int reg, string name)> InferLightmapNames(Ast.Module prog, int i,
+            Instruction sample, Dictionary<int, Instruction> dynamicLightmaps)
+        {
+            if (sample.Opcode != "sample" || i + 1 >= prog.Code.Count ||
+                sample.Args[0].Swizzle is not (null or ".xyzw") ||
+                sample.Args[2].Swizzle is not (null or ".xyzw")) yield break;
+
+            var next = prog.Code[i + 1];
+            var target = sample.Args[0];
+            var uv = sample.Args[1];
+            int register = sample.Args[2].Index;
+            int sampler = sample.Args[3].Index;
+            if (next.Args.Count != 3) yield break;
+            for (int factor = 1; factor <= 2; factor++)
+            {
+                var value = next.Args[3 - factor];
+                if (!SameTemp(target, value)) continue;
+                if (next.Opcode == "mul" && value.Swizzle is ".w" or ".wwww" &&
+                    ConstantMember(next.Args[factor], ".x") == "unity_DynamicLightmap_HDR")
+                {
+                    dynamicLightmaps[sampler] = sample;
+                    yield return (register, "unity_DynamicLightmap");
+                }
+                if (next.Opcode == "dp4" && value.Swizzle is null or ".xyzw" &&
+                    ConstantMember(next.Args[factor], ".xyzw") == "unity_OcclusionMaskSelector")
+                    yield return (register, "unity_ShadowMask");
+            }
+
+            // Directional lightmaps subtract 0.5 from the encoded direction before the dot.
+            if (next.Opcode == "add" && SameTemp(target, next.Args[1]) &&
+                next.Args[2].Lit is { Length: 4 } offset &&
+                offset[0] == -0.5f && offset[1] == -0.5f && offset[2] == -0.5f &&
+                dynamicLightmaps.TryGetValue(sampler, out var color) &&
+                color.Args[2].Index != register &&
+                uv.Kind == color.Args[1].Kind && uv.Index == color.Args[1].Index &&
+                uv.Swizzle == color.Args[1].Swizzle)
+                yield return (register, "unity_DynamicDirectionality");
+        }
+
+        private string ConstantMember(Operand operand, string swizzle) =>
+            operand.Kind == RegKind.Cb && !operand.Negate && !operand.Abs &&
+            operand.Swizzle?.StartsWith(swizzle, StringComparison.Ordinal) == true &&
+            RowExpr.TryGetValue((operand.Index, operand.Row), out string name) ? name : null;
+
+        private static bool IsScale(Operand scale, Operand offset) =>
+            scale.Kind == RegKind.Cb && !scale.Negate && !scale.Abs &&
+            scale.Index == offset.Index && scale.Row == offset.Row &&
+            scale.Swizzle?.StartsWith(".xy", StringComparison.Ordinal) == true;
+
+        private static bool SameTemp(Operand dest, Operand source) =>
+            dest.Kind == RegKind.R && source.Kind == RegKind.R && dest.Index == source.Index &&
+            !source.Abs && !source.Negate;
+
+        private static bool IsLiteral(Operand operand, float value) =>
+            !operand.IntLit && !operand.Abs && operand.Lit is { Length: 1 } values &&
+            (operand.Negate ? -values[0] : values[0]) == value;
+
+        private void MapTextures(Ast.Module prog, IReadOnlyList<Property> props,
+                                 System.Collections.Generic.List<(string Name, int Index, int Sampler)> texParams,
+                                 Dictionary<int, string> glslTexNames = null,
+                                 Dictionary<int, string> blobTexNames = null)
+        {
+            // A name is trustworthy when the shader itself declares it.  The
+            // property table is authoritative for material textures; the name table
+            // passed down here is the pass tag list, so it cannot vouch for anything.
+            var regs = prog.Decls.Where(d => d.Kind != null && d.Kind.StartsWith("texture"))
+                                 .Select(d => d.Register).Distinct().OrderBy(x => x).ToList();
+            if (regs.Count == 0) return;
+            if (texParams != null)
+                foreach (var entry in texParams)
+                    if (entry.Sampler >= 0 && regs.Contains(entry.Index))
+                        SamplerTexture.TryAdd(entry.Sampler, entry.Index);
+
+            // 0. The compiled program's own parameter blob -- the table the DX11
+            // runtime actually consumes.  Unity strips RDEF out of the DXBC
+            // container but keeps this beside it, so it is the strongest evidence
+            // available for a Windows-only asset: ADOFAI/Frames records _PlanetTex
+            // with m_Index = 0 and _AlphaTex with m_Index = 1, exactly the GL-family
+            // build's UNITY_LOCATION(0/1).  Unity omits a record it can derive by
+            // convention, so a partial table is normal and the layers below fill in.
+            if (blobTexNames != null && blobTexNames.Count > 0)
+            {
+                var named = new List<string>();
+                foreach (var kv in blobTexNames.OrderBy(x => x.Key))
+                {
+                    int reg = kv.Key;
+                    string nm = kv.Value;
+                    if (!regs.Contains(reg)) continue;
+                    // No property-table check here.  Unity records built-in samplers
+                    // too -- `_GrabTexture` and `_CameraDepthTexture` are engine-injected
+                    // and never appear in a Properties block, yet the blob names them
+                    // and the compiled program samples them.  Requiring the name to be
+                    // declared dropped exactly those.
+                    if (string.IsNullOrEmpty(nm)) continue;
+                    if (!System.Text.RegularExpressions.Regex.IsMatch(nm, @"^[A-Za-z_][A-Za-z0-9_]*$"))
+                        continue;
+                    TexName[reg] = nm;
+                    named.Add($"t{reg}={nm}");
+                }
+                if (named.Count > 0)
+                    FileNotes.Add("texture names from the program's parameter blob (Unity's own " +
+                                  "binding table, the RDEF Unity strips from DXBC): " +
+                                  string.Join(", ", named));
+            }
+
+            // A serialized per-program register binding also carries engine-supplied
+            // textures that have no ShaderLab property (depth, shadows and lightmaps).
+            if (texParams != null)
+                foreach (var (name, register, _) in texParams)
+                    if (regs.Contains(register) && !string.IsNullOrEmpty(name) &&
+                        System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*$") &&
+                        !TexName.ContainsValue(name))
+                        TexName.TryAdd(register, name);
+
+            // 1. GL-family source names -- the strongest source when the asset ships
+            // a GL-family variant at all.  The GLSL text is Unity's own translation
+            // and keeps the property names the DXBC payload strips; locations and
+            // texture registers are assigned in the same property order, so they
+            // pair up positionally.  Registers the parameter blob already named stay
+            // put: that table is read per program, this one is per shader.
+            if (glslTexNames != null && glslTexNames.Count > 0)
+            {
+                var locs = glslTexNames.Keys.OrderBy(x => x).ToList();
+                int g = Math.Min(regs.Count, locs.Count);
+                if (g > 0)
+                {
+                    var named = new List<string>();
+                    for (int i = 0; i < g; i++)
+                    {
+                        if (TexName.ContainsKey(regs[i]) || TexName.ContainsValue(glslTexNames[locs[i]])) continue;
+                        TexName[regs[i]] = glslTexNames[locs[i]];
+                        named.Add($"t{regs[i]}={glslTexNames[locs[i]]}");
+                    }
+                    if (named.Count > 0)
+                        FileNotes.Add("texture names from the shader's own GLSL source: " +
+                                      string.Join(", ", named));
+                }
+            }
+
+            if (regs.All(TexName.ContainsKey)) return;
+
+            var texProps = new List<string>();
+            if (props != null)
+                foreach (var p in props.Where(p => TextureTypes.Contains(p.Type)))
+                    texProps.Add(p.Name);
+
+            var inferred = InferTextureNames(prog, texProps).Distinct().ToList();
+            foreach (var (reg, name) in inferred)
+                if (regs.Contains(reg) && !TexName.ContainsValue(name) &&
+                    inferred.Count(x => x.reg == reg || x.name == name) == 1 &&
+                    TexName.TryAdd(reg, name))
+                    FileNotes.Add($"texture name from sampling instructions: t{reg}={name}");
+
+            var open = regs.Where(r => !TexName.ContainsKey(r)).ToList();
+            if (open.Count == 0) return;
+
+            // A property the reflection already bound must not be handed out again:
+            // two registers with one name do not compile (`redefinition of
+            // '_MainTex'`), and the second binding is a leftover sampler anyway.
+            var used = new HashSet<string>(TexName.Values, StringComparer.Ordinal);
+            var spare = texProps.Where(p => !used.Contains(p)).ToList();
+
+            // 3. Last resort: fill the leftovers from declaration order, but pair by
+            // texture *dimension* first.
+            //
+            // The two lists rarely line up.  A texture property the shader never
+            // samples in this variant (a `multi_compile` branch that is compiled out)
+            // leaves more properties than registers; a built-in sampler Unity injects
+            // (camera depth, a grab texture) leaves more registers than properties.
+            // Plain position matching is what the corpus measures at 849/849 for t0,
+            // but it is blind to type: TMP's Distance Field declares
+            // _Cube (Cube) after four 2D maps and the compiler put it on t4, which
+            // happens to be last, so position alone got it right by luck.
+            //
+            // The declaration a DXBC program carries does record the dimension
+            // (`dcl_resource_texture2d` vs `dcl_resource_texturecube`), and the shader
+            // declares it too (the property type), so the two can be paired
+            // dimension-first and only then by order.  That removes the luck: a
+            // cubemap can only take a cubemap register no matter where it is declared.
+            //
+            // Unity itself never infers a name from declaration order: the DX11
+            // runtime binds by property NAME into a hash table
+            // (`ShaderPropertySheet::AddNewPropertyUninitialized` binary-searches the
+            // FastPropertyName id) and never consults t#.  So this stays a guess, and
+            // the note says which registers it covers -- but it runs only after the
+            // two authoritative sources (parameter blob, GLSL slots) and the asset's
+            // own reflection have had their say.
+            var regDim = new Dictionary<int, char>();
+            foreach (var d in prog.Decls)
+            {
+                if (d.Kind != "texture" || d.Structured) continue;
+                char dim = d.Dimension switch
+                {
+                    2 => '2',
+                    3 => '3',
+                    4 when d.Raw?.Contains("texturecubearray", StringComparison.Ordinal) != true => 'c',
+                    4 or 5 => 'a',
+                    _ => '?',
+                };
+                if (!regDim.ContainsKey(d.Register)) regDim[d.Register] = dim;
+            }
+            char DimOfProperty(string nm)
+            {
+                var p = props?.FirstOrDefault(x => x.Name == nm);
+                if (p == null) return '2';
+                // UnityEngine.Rendering.TextureDimension as serialized in
+                // m_DefTexture.m_TexDim: None=0, Any=1, Tex2D=2, Tex3D=3, Cube=4,
+                // Tex2DArray=5, CubeArray=6.
+                return p.DefTextureDim switch
+                {
+                    3 => '3',
+                    4 => 'c',
+                    5 => 'a',
+                    6 => 'a',
+                    _ => '2',
+                };
+            }
+
+            var openByDim = open.GroupBy(r => regDim.TryGetValue(r, out var cd) ? cd : '2')
+                                .ToDictionary(g => g.Key, g => g.ToList());
+            var spareLeft = new List<string>(spare);
+            var assigned = new List<string>();
+            foreach (var dim in new[] { 'c', '3', 'a', '2' })
+            {
+                if (!openByDim.TryGetValue(dim, out var dimRegs)) continue;
+                var pool = spareLeft.Where(p => DimOfProperty(p) == dim).ToList();
+                int k = 0;
+                foreach (int reg in dimRegs)
+                {
+                    if (k >= pool.Count) break;
+                    TexName[reg] = pool[k];
+                    assigned.Add($"t{reg}={pool[k]}");
+                    spareLeft.Remove(pool[k]);
+                    k++;
+                }
+            }
+
+            if (assigned.Count > 0)
+            {
+                if (Environment.GetEnvironmentVariable("SHADERRIP_TEXDBG") == "1")
+                    Console.Error.WriteLine($"[ord] filled {assigned.Count}: " + string.Join(", ", assigned));
+                // The names above are an inference, not a reading: nothing in the
+                // asset proves the slot holds that property rather than one the pass
+                // never uses.  Say so in the file instead of letting the result look
+                // authoritative.  (Notes merge per PASS, and the programs of one pass
+                // can be covered differently -- the blob records a register for one
+                // variant and omits it for another -- so the wording must stay true
+                // whether or not a blob record exists for this particular program.)
+                FileNotes.Add("texture names filled from property order where no recorded " +
+                              "binding covered the register (unverified guess): " +
+                              string.Join(", ", assigned));
+            }
+
+            var unnamed = regs.Where(r => !TexName.ContainsKey(r)).ToList();
+            if (unnamed.Count > 0)
+                FileNotes.Add($"{unnamed.Count} texture register(s) the asset did not name -- left as tN" +
+                              (spareLeft.Count > 0
+                                  ? " (candidate texture properties, declaration order: " +
+                                    string.Join(", ", spareLeft) + ")"
+                                  : ""));
+        }
+    }
+}

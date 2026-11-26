@@ -1,0 +1,959 @@
+/* 设计基调：Fluent 2 深色。
+   颜色全部走 Fluent design token（--colorNeutral*），主题切换只改 JS，不动 CSS。 */
+
+:root {
+    --rail-width: 76px;
+    --panel-width: 248px;
+    --titlebar-height: 44px;
+    --radius: 6px;
+    --ease: cubic-bezier(0.33, 0, 0.67, 1);
+    --accent: #4cc2ff;
+    --accent-strong: #0078d4;
+}
+
+/* ---------- 主题 ----------
+ * 颜色全部走 Fluent 的设计 token（--colorNeutral*）。切换主题只改 <html data-theme>，
+ * 这里覆盖这些 token 的取值；Fluent 组件自己读的是同一套 token，所以会跟着变。
+ *
+ * data-theme 的取值由 js/theme.js 决定：
+ *   "dark" / "light"  —— 用户手动指定
+ *   "system"          —— 跟随系统，由脚本解析成实际的 dark / light 之后再写回来
+ * 注意 :root 上的 color-scheme 也要跟着切换，否则原生滚动条、表单控件还是旧配色。
+ */
+
+/* 浅色：Fluent 2 Light 色阶，同样是完整一套 token。 */
+:root[data-theme="light"] {
+    color-scheme: light;
+
+    --colorNeutralBackground1: #ffffff;
+    --colorNeutralBackground1Hover: #f5f5f5;
+    --colorNeutralBackground1Pressed: #e0e0e0;
+    --colorNeutralBackground1Selected: #ebebeb;
+    --colorNeutralBackground2: #fafafa;
+    --colorNeutralBackground3: #f2f2f2;
+    --colorNeutralBackground4: #ebebeb;
+    --colorNeutralBackground5: #e0e0e0;
+    --colorNeutralBackground6: #d6d6d6;
+    --colorNeutralBackgroundDisabled: #f0f0f0;
+    --colorNeutralBackgroundInverted: #1b1b1b;
+
+    --colorNeutralForeground1: #1b1b1b;
+    --colorNeutralForeground1Hover: #000000;
+    --colorNeutralForeground1Pressed: #2b2b2b;
+    --colorNeutralForeground1Static: #1b1b1b;
+    --colorNeutralForeground2: #424242;
+    --colorNeutralForeground2Hover: #1b1b1b;
+    --colorNeutralForeground2Pressed: #333333;
+    --colorNeutralForeground2Selected: #1b1b1b;
+    --colorNeutralForeground2BrandHover: #0f6cbd;
+    --colorNeutralForeground2BrandPressed: #0c5a9e;
+    --colorNeutralForeground2BrandSelected: #0f6cbd;
+    --colorNeutralForeground2Link: #0f6cbd;
+    --colorNeutralForeground2LinkHover: #0c5a9e;
+    --colorNeutralForeground2LinkPressed: #094a82;
+    --colorNeutralForeground3: #616161;
+    --colorNeutralForeground3Hover: #424242;
+    --colorNeutralForeground3Pressed: #4e4e4e;
+    --colorNeutralForeground3Selected: #424242;
+    --colorNeutralForeground4: #707070;
+    --colorNeutralForegroundDisabled: #bdbdbd;
+    --colorNeutralForegroundInverted: #ffffff;
+    --colorNeutralForegroundInvertedHover: #f5f5f5;
+    --colorNeutralForegroundInvertedPressed: #e0e0e0;
+    --colorNeutralForegroundOnBrand: #ffffff;
+    --colorNeutralForegroundStaticInverted: #ffffff;
+
+    --colorNeutralStroke1: #d1d1d1;
+    --colorNeutralStroke1Hover: #bdbdbd;
+    --colorNeutralStroke1Pressed: #a8a8a8;
+    --colorNeutralStroke2: #e0e0e0;
+    --colorNeutralStroke3: #f0f0f0;
+    --colorNeutralStrokeAccessible: #616161;
+    --colorNeutralStrokeAccessibleHover: #424242;
+    --colorNeutralStrokeAccessiblePressed: #4e4e4e;
+    --colorNeutralStrokeDisabled: #e0e0e0;
+    --colorNeutralStrokeOnBrand2: #ffffff;
+
+    --colorNeutralShadowAmbient: rgb(0 0 0 / 12%);
+    --colorNeutralShadowKey: rgb(0 0 0 / 14%);
+
+    /* 本项目自定义的次要色 */
+    --surface: #ffffff;
+    --surface-alt: rgb(0 0 0 / 4%);
+    --surface-raised: #f5f5f5;
+    --border: #e0e0e0;
+    --border-strong: #c7c7c7;
+    --text: #1b1b1b;
+    --text-muted: #5c5c5c;
+    --text-dim: #8a8a8a;
+    --accent: #0f6cbd;
+    --accent-strong: #005a9e;
+    --accent-soft: rgb(15 108 189 / 14%);
+}
+
+/* 深色：覆盖 Fluent 组件实际引用的全部中性 token。
+ * 只定义了一部分是不够的——没定义的那些会回落到 Fluent 内置的深色值，
+ * 于是悬停/按下/禁用状态在浅色主题下仍然是深色。 */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --colorNeutralBackground1: #1b1b1b;
+    --colorNeutralBackground1Hover: #252525;
+    --colorNeutralBackground1Pressed: #1a1a1a;
+    --colorNeutralBackground1Selected: #2d2d2d;
+    --colorNeutralBackground2: #212121;
+    --colorNeutralBackground3: #2b2b2b;
+    --colorNeutralBackground4: #333333;
+    --colorNeutralBackground5: #3d3d3d;
+    --colorNeutralBackground6: #4a4a4a;
+    --colorNeutralBackgroundDisabled: #2b2b2b;
+    --colorNeutralBackgroundInverted: #f0f0f0;
+
+    --colorNeutralForeground1: #f0f0f0;
+    --colorNeutralForeground1Hover: #ffffff;
+    --colorNeutralForeground1Pressed: #e0e0e0;
+    --colorNeutralForeground1Static: #f0f0f0;
+    --colorNeutralForeground2: #d6d6d6;
+    --colorNeutralForeground2Hover: #f0f0f0;
+    --colorNeutralForeground2Pressed: #c8c8c8;
+    --colorNeutralForeground2Selected: #f0f0f0;
+    --colorNeutralForeground2BrandHover: #4cc2ff;
+    --colorNeutralForeground2BrandPressed: #3aa8e0;
+    --colorNeutralForeground2BrandSelected: #4cc2ff;
+    --colorNeutralForeground2Link: #4cc2ff;
+    --colorNeutralForeground2LinkHover: #7ad3ff;
+    --colorNeutralForeground2LinkPressed: #3aa8e0;
+    --colorNeutralForeground3: #b4b4b4;
+    --colorNeutralForeground3Hover: #d6d6d6;
+    --colorNeutralForeground3Pressed: #a8a8a8;
+    --colorNeutralForeground3Selected: #d6d6d6;
+    --colorNeutralForeground4: #9a9a9a;
+    --colorNeutralForegroundDisabled: #6b6b6b;
+    --colorNeutralForegroundInverted: #1b1b1b;
+    --colorNeutralForegroundInvertedHover: #252525;
+    --colorNeutralForegroundInvertedPressed: #1a1a1a;
+    --colorNeutralForegroundOnBrand: #06131f;
+    --colorNeutralForegroundStaticInverted: #ffffff;
+
+    --colorNeutralStroke1: #3a3a3a;
+    --colorNeutralStroke1Hover: #4a4a4a;
+    --colorNeutralStroke1Pressed: #333333;
+    --colorNeutralStroke2: #2f2f2f;
+    --colorNeutralStroke3: #262626;
+    --colorNeutralStrokeAccessible: #b4b4b4;
+    --colorNeutralStrokeAccessibleHover: #d6d6d6;
+    --colorNeutralStrokeAccessiblePressed: #a8a8a8;
+    --colorNeutralStrokeDisabled: #2f2f2f;
+    --colorNeutralStrokeOnBrand2: #ffffff;
+
+    --colorNeutralShadowAmbient: rgb(0 0 0 / 32%);
+    --colorNeutralShadowKey: rgb(0 0 0 / 40%);
+
+    /* 本项目自定义的次要色 */
+    --surface: #1d2027;
+    --surface-alt: rgb(255 255 255 / 6%);
+    --surface-raised: #232833;
+    --border: #2c313a;
+    --border-strong: #3a4150;
+    --text: #e6e8ec;
+    --text-muted: #9aa0aa;
+    --text-dim: #6b7280;
+    --accent: #4cc2ff;
+    --accent-strong: #0078d4;
+    --accent-soft: rgb(76 194 255 / 18%);
+}
+
+/* 切换瞬间给个过渡，避免整屏闪一下；但用户开了「减少动态效果」就不要 */
+@media (prefers-reduced-motion: no-preference) {
+    body,
+    .app,
+    .panel,
+    .table-wrap,
+    .card,
+    .detail {
+        transition: background-color 160ms var(--ease), color 160ms var(--ease);
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+}
+
+body {
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--colorNeutralBackground3, #141414);
+    color: var(--colorNeutralForeground1, #f0f0f0);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+}
+
+/* 文本区域可选中，符合桌面应用习惯 */
+pre,
+code,
+.log__list,
+.detail__text,
+.grid td {
+    user-select: text;
+}
+
+/* ---------- 布局骨架 ---------- */
+
+.app {
+    display: grid;
+    grid-template-columns: var(--rail-width) var(--panel-width) minmax(0, 1fr);
+    grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
+    grid-template-areas:
+        "title title title"
+        "nav   panel main";
+    height: 100vh;
+}
+
+.titlebar {
+    grid-area: title;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px;
+    background: var(--colorNeutralBackground2, #1b1b1b);
+    border-bottom: 1px solid var(--colorNeutralStroke2, #2b2b2b);
+}
+
+.titlebar__brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: calc(var(--rail-width) + var(--panel-width) - 24px);
+}
+
+.logo {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #4cc2ff, #0078d4);
+    color: #06131f;
+}
+
+.titlebar__name {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.titlebar__env {
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    background: var(--colorNeutralBackground3, #141414);
+    border: 1px solid var(--colorNeutralStroke2, #2b2b2b);
+}
+
+.titlebar__status {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 45%;
+}
+
+.titlebar__progress {
+    flex: 1;
+    max-width: 260px;
+}
+
+/* ---------- 左侧导航 ---------- */
+
+/* .sidebar 只是 rail + panel 的语义容器，本身必须不参与布局，
+   否则它们会被当成 grid 的第一列子项、挤进 76px 的栏里。 */
+.sidebar {
+    display: contents;
+}
+
+.rail {
+    grid-area: nav;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 6px 6px 10px;
+    background: var(--colorNeutralBackground2, #1b1b1b);
+    border-right: 1px solid var(--colorNeutralStroke2, #2b2b2b);
+}
+
+.rail__item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 9px 2px 7px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+
+.rail__item:hover {
+    background: var(--colorNeutralBackground1Hover, #262626);
+    color: var(--colorNeutralForeground1, #f0f0f0);
+}
+
+.rail__item.is-active {
+    /* 选中态用左侧竖条 + 品牌色，比整块高亮更克制 */
+    position: relative;
+    color: var(--accent);
+    background: var(--colorNeutralBackground1Selected, #2a2a2a);
+}
+
+.rail__item.is-active::before {
+    content: "";
+    position: absolute;
+    left: -6px;
+    top: 50%;
+    translate: 0 -50%;
+    width: 3px;
+    height: 20px;
+    border-radius: 0 2px 2px 0;
+    background: var(--accent);
+}
+
+.rail__spacer {
+    flex: 1;
+}
+
+.rail__item--ghost {
+    opacity: 0.65;
+}
+
+/* 未导入文件时资源/文件/导出没有内容可显示 */
+.rail__item:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.rail__item:disabled:hover {
+    background: transparent;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+}
+
+/* 导入入口固定在顶部：它和其它视图不同级，用一条细分隔线隔开 */
+.rail__item--import {
+    margin-bottom: 4px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--colorNeutralStroke3, #232323);
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+
+/* ---------- 第二栏 ---------- */
+
+.panel {
+    grid-area: panel;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--colorNeutralBackground2, #1b1b1b);
+    border-right: 1px solid var(--colorNeutralStroke2, #2b2b2b);
+}
+
+.panel__header {
+    padding: 14px 14px 8px;
+}
+
+.panel__header h2 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+}
+
+.panel__body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 0 8px 12px;
+}
+
+/* 类型直方图 */
+.class-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.class-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--colorNeutralForeground1, #f0f0f0);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.class-item:hover {
+    background: var(--colorNeutralBackground1Hover, #262626);
+}
+
+.class-item.is-active {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: #a5e0ff;
+}
+
+.class-item__name {
+    flex: none;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.class-item__bar {
+    flex: 1;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--colorNeutralStroke2, #2b2b2b);
+    overflow: hidden;
+}
+
+.class-item__fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
+.class-item__count {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    min-width: 34px;
+    text-align: right;
+}
+
+/* ---------- 主区 ---------- */
+
+.main {
+    grid-area: main;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.view {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.view.is-active {
+    display: flex;
+}
+
+/* ---------- 工具条 ---------- */
+
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--colorNeutralBackground2, #1b1b1b);
+    border-bottom: 1px solid var(--colorNeutralStroke2, #2b2b2b);
+}
+
+.toolbar__search {
+    flex: 1;
+    min-width: 0;
+}
+
+.toolbar__spacer {
+    flex: 1;
+}
+
+.toolbar__count {
+    font-size: 12px;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* ---------- 通用 ---------- */
+
+.muted {
+    color: var(--colorNeutralForeground3, #9a9a9a);
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.field {
+    width: 100%;
+    margin-top: 14px;
+}
+
+.card {
+    margin: 24px auto;
+    width: min(680px, calc(100% - 48px));
+    padding: 24px 26px 28px;
+    border-radius: 10px;
+    background: var(--colorNeutralBackground2, #1b1b1b);
+    border: 1px solid var(--colorNeutralStroke2, #2b2b2b);
+    box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+    overflow: auto;
+}
+
+.card h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+/* ---------- 滚动条 ---------- */
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--colorNeutralForeground3, #9a9a9a) 35%, transparent);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--colorNeutralForeground3, #9a9a9a) 60%, transparent);
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* ---------- 提示条 ---------- */
+
+.toast-host {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 100;
+    pointer-events: none;
+}
+
+.toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 240px;
+    max-width: 420px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--colorNeutralBackground1, #212121);
+    border: 1px solid var(--colorNeutralStroke2, #2b2b2b);
+    box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+    animation: toast-in 160ms var(--ease);
+}
+
+.toast.is-error {
+    border-color: color-mix(in srgb, #ff6b6b 55%, transparent);
+}
+
+.toast.is-success {
+    border-color: color-mix(in srgb, #54d17a 55%, transparent);
+}
+
+.toast__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--accent);
+}
+
+.toast.is-error .toast__dot {
+    background: #ff6b6b;
+}
+
+.toast.is-success .toast__dot {
+    background: #54d17a;
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+}
+
+/* ---------------------------------------------------------------- 3D 模型预览 */
+
+.preview-model {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 8px 0;
+    /* 深色底让浅色模型轮廓清楚，和 Unity Scene 视图的习惯一致 */
+    background: radial-gradient(circle at 50% 40%, #2a2f3a, #171a20 70%);
+    border: 1px solid var(--border, #2c313a);
+    border-radius: 10px;
+    overflow: hidden;
+    /* 画布是正方形，容器必须给够高度，否则方形画布会被裁成细条，
+       看起来就像「预览是空的」。 */
+    min-height: 300px;
+    padding: 8px;
+    box-sizing: border-box;
+}
+
+.model-canvas {
+    display: block;
+    /* 抓取光标提示「可以拖」，否则没人会想到能转 */
+    cursor: grab;
+    touch-action: none;
+}
+
+.model-canvas:active {
+    cursor: grabbing;
+}
+
+.preview-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+/* ---------------------------------------------------------------- 右键菜单 */
+
+.context-menu {
+    position: fixed;
+    z-index: 9000;
+    min-width: 240px;
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border, #2c313a);
+    background: var(--surface, #1d2027);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.context-menu__item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text, #e6e8ec);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.context-menu__item:hover,
+.context-menu__item:focus-visible {
+    background: var(--accent-soft, rgb(96 132 255 / 18%));
+    outline: none;
+}
+
+.context-menu__label {
+    font-size: 13px;
+}
+
+.context-menu__hint {
+    font-size: 11px;
+    opacity: 0.62;
+}
+/* ---------------------------------------------------------------- 视图切换 */
+
+.view-toggle {
+    display: flex;
+    gap: 2px;
+    margin-left: 8px;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--surface-alt, rgb(255 255 255 / 6%));
+}
+
+.view-toggle__btn {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted, #9aa0aa);
+    cursor: pointer;
+}
+
+.view-toggle__btn svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+
+.view-toggle__btn:hover {
+    color: var(--text, #e6e8ec);
+}
+
+.view-toggle__btn.is-active {
+    background: var(--accent-soft, rgb(96 132 255 / 26%));
+    color: var(--accent, #6b8cff);
+}
+
+/* ---------------------------------------------------------------- 网格视图 */
+
+.asset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 10px;
+    padding: 10px;
+    align-content: start;
+    /* 撑满可用高度并自己滚动，和表格视图的行为一致 */
+    overflow-y: auto;
+    /* 内容比容器高时也要能滚（表格有独立滚动的 wrap） */
+    max-height: var(--grid-max-height, 100%);
+}
+
+.asset-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: var(--surface, #1d2027);
+    color: var(--text, #e6e8ec);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.asset-cell:hover {
+    border-color: var(--border-strong, #3a4150);
+}
+
+.asset-cell.is-selected {
+    border-color: var(--accent, #6b8cff);
+    box-shadow: 0 0 0 1px var(--accent, #6b8cff) inset;
+}
+
+/* 多选：用角标而不是换整张底，避免和「当前选中」混淆 */
+.asset-cell.is-checked {
+    background: var(--accent-soft, rgb(96 132 255 / 18%));
+}
+
+.asset-cell.is-checked .asset-cell__thumb::after {
+    content: "✓";
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent, #6b8cff);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+}
+
+.asset-cell__thumb {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 6px;
+    /* 棋盘格底：半透明图片能看出透明区域 */
+    background-color: #12151a;
+    background-image:
+        linear-gradient(45deg, #1b1f26 25%, transparent 25%),
+        linear-gradient(-45deg, #1b1f26 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #1b1f26 75%),
+        linear-gradient(-45deg, transparent 75%, #1b1f26 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+    overflow: hidden;
+}
+
+.asset-cell__thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.asset-cell__thumb.is-placeholder,
+.asset-cell__thumb.is-failed {
+    color: var(--text-dim, #6b7280);
+    font-size: 11px;
+    padding: 4px;
+    text-align: center;
+    word-break: break-all;
+}
+
+.asset-cell__name {
+    font-size: 11px;
+    line-height: 1.3;
+    /* 名字太长省略，悬停看完整名 */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
+}
+
+/* ---------------------------------------------------------------- 批量操作条 */
+
+.batch-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border, #2c313a);
+    background: var(--surface-raised, #232833);
+    /* 父容器 .table-wrap 自己是滚动区，操作条必须吸附在底部，
+       否则选中后要一路滚到底才看得见。 */
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    box-shadow: 0 -6px 16px rgb(0 0 0 / 28%);
+}
+
+.batch-bar__count {
+    font-size: 13px;
+    color: var(--text-muted, #9aa0aa);
+    margin-right: auto;
+}
+/* ---------------------------------------------------------------- 导出筛选 */
+
+.filter-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--border, #2c313a);
+    border-radius: 10px;
+    background: var(--surface-alt, rgb(255 255 255 / 3%));
+}
+
+.filter-block__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filter-block__title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-right: auto;
+}
+
+.filter-block__hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted, #9aa0aa);
+}
+
+.chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.chip {
+    padding: 3px 10px;
+    border: 1px solid var(--border-strong, #3a4150);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted, #9aa0aa);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chip:hover {
+    color: var(--text, #e6e8ec);
+    border-color: var(--accent, #6b8cff);
+}
+
+.chip.is-on {
+    border-color: var(--accent, #6b8cff);
+    background: var(--accent-soft, rgb(96 132 255 / 22%));
+    color: var(--accent, #8aa4ff);
+}
+/* ---------------------------------------------------------------- 主题按钮 */
+
+.icon-btn {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    margin-right: 8px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--colorNeutralForeground2, #d6d6d6);
+    cursor: pointer;
+}
+
+.icon-btn:hover {
+    background: var(--colorNeutralBackground1Hover, #252525);
+    color: var(--colorNeutralForeground1, #f0f0f0);
+}
+
+.icon-btn svg {
+    width: 15px;
+    height: 15px;
+    fill: currentColor;
+    /* 只显示当前模式对应的那个图标 */
+    display: none;
+}
+
+.icon-btn[data-mode="system"] .icon-btn__auto,
+.icon-btn[data-mode="dark"] .icon-btn__moon,
+.icon-btn[data-mode="light"] .icon-btn__sun {
+    display: block;
+}

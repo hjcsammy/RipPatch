@@ -1,0 +1,30 @@
+# 构建产物
+**/[Bb]in/
+**/[Oo]bj/
+**/publish/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+.vscode/
+
+# 会话/缓存
+.temp/
+.workbuddy/
+# globals_names/ 本地专用修复表，不入库
+globals_names/
+
+# 旧的手写实现，只在本地留作参考与产物对比，不参与构建
+src/*.Old/
+# UnityShaderCompiler run log
+scripts/usc_check.log
+
+tools/starrail/
+/tools/pack-zip.ps1
+
+#其他
+__pycache__/
+debug.log
+tmp_test

@@ -1,0 +1,97 @@
+ Build outputs
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+*.sln.iml
+
+# NuGet packages
+**/packages/
+*.nupkg
+*.snupkg
+
+# Local test files
+*.test
+*.tmp
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# User-specific files
+*.userprefs
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# AssetRipper submodule build outputs (这些是子模块的构建输出，不应该提交)
+AssetRipper/Source/0Bins/
+AssetRipper/Source/*/bin/
+AssetRipper/Source/*/obj/
+
+# arp.ps1 铺子模块时写的版本戳（本机状态，不提交）
+AssetRipper/.arp-source-stamp.json
+ShaderRipper/.arp-source-stamp.json
+
+# arp.ps1 的下载缓存（.NET SDK 安装包，几百 MB）
+.cache/
+
+# RipPatch build outputs
+RipPatch/bin/
+AssetRipperPatcher/bin/
+RipPatch/obj/
+AssetRipperPatcher/obj/
+
+publish/
+publish
+# Local sandbox projects (not part of the build)
+.ignores/
+
+# Release artifacts
+RipPatch-*.zip
+AssetRipperPatcher-*.zip
+
+
+# Local agent notes
+.workbuddy/
+
+# UI build inputs (npm 依赖体积大；构建产物 wwwroot/lib/fluent.js 已提交，
+# 只有要升级 Fluent 版本时才需要 npm install 重新打包)
+RipPatch/WebUi/ui/node_modules/
+AssetRipperPatcher/WebUi/ui/node_modules/
+
+
+# Package harvester cache (multi-GB tarballs; rerun tools/UnityPackageHarvester to refill)
+tools/.cache/
+
+# 技术论文不随仓库发布（docs/ 下其它文档正常跟踪）
+docs/ShaderRipper-技术论文.md
+
+# AI 配置（含 API Key，绝不提交）
+ai.json
+
+# 本地开发辅助脚本（对外发布时不包含）
+# 这些只服务于本仓库的维护工作（改版本号、打包、发 Release、修脚本编码），
+# 和 RipPatch 本身的功能无关，所以不进仓库。
+tools/release-lib.ps1
+tools/release-ai.ps1
+tools/release-ui.ps1
+tools/dev-fix-encoding.ps1
+发布.cmd
