@@ -68,8 +68,11 @@ public sealed record PageDto<T>(
 	int Limit);
 
 /// <summary>资源详情：属性表 + 可用预览。</summary>
+/// <summary>资源详情面板用的数据。</summary>
+/// <remarks>PathId 必须是 string：这是前端拿去请求其它接口的主键，
+/// 用数字会因 JS 精度问题被截断，导致后续请求全部 404。</remarks>
 public sealed record AssetDetailDto(
-	long PathId,
+	string PathId,
 	int ClassId,
 	string ClassName,
 	string Name,

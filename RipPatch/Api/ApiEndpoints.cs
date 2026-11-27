@@ -202,7 +202,7 @@ internal static class ApiEndpoints
 
 		return Results.Json(
 			new AssetDetailDto(
-				PathId: asset.PathID,
+				PathId: asset.PathID.ToString(System.Globalization.CultureInfo.InvariantCulture),
 				ClassId: asset.ClassID,
 				ClassName: asset.ClassName,
 				Name: asset.GetBestName(),
