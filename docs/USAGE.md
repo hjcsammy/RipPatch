@@ -2,7 +2,7 @@
 
 把 Unity 游戏导出成「能在 Unity 里打开、能跑起来」的工程。
 
-本文面向**使用者**。想了解实现原理、补丁写法、代码结构，看 [README](../README.md)；
+本文面向**使用者**。想了解实现原理、补丁写法、代码结构，看 [README](../README.zh.md)；
 想脚本化调用 HTTP 接口，看 [JSON API](json-api.md)。
 
 ---
@@ -308,7 +308,7 @@ RipPatch\bin\Release\net10.0\RipPatch.exe --web --port 5199 --no-open
 | 导出目录被拒绝 | 护栏：桌面 / 盘符根 / 用户目录 | 换一个专用子文件夹 |
 | 双击 exe 闪退 | 缺 WebView2 | 装 WebView2，或改用 `--web` |
 | 界面空白 | `wwwroot` 没跟 exe 放一起 | 拷整个目录，别只拷 exe |
-| 导出后 Unity 里脚本全是 `Missing (Mono Script)` | IL2CPP 元数据被加密，或 DLL 被删 | 见 [已知限制](../README.md#已知限制) |
+| 导出后 Unity 里脚本全是 `Missing (Mono Script)` | IL2CPP 元数据被加密，或 DLL 被删 | 见 [已知限制](../README.zh.md#已知限制) |
 | 想从头再来 | 产物乱了 | `.\tools\arp.ps1 clean` 后重跑 |
 
 ### 导出结果为空的 Prefab / 看不到 UI

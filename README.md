@@ -4,169 +4,176 @@
 
 <h1>RipPatch</h1>
 
-<p><strong>把 Unity 游戏资源还原成可以直接打开的工程</strong></p>
+<p><strong>Turn Unity game assets into a project you can actually open</strong></p>
 
 <p>
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#功能">功能</a> ·
-  <a href="#修复了什么">修复了什么</a> ·
-  <a href="#文档">文档</a> ·
-  <a href="#构建">构建</a>
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#what-it-fixes">What it fixes</a> ·
+  <a href="#docs">Docs</a> ·
+  <a href="#building">Building</a>
 </p>
 
 <p>
-  <strong>中文</strong> · <a href="README.en.md">English</a>
+  <a href="README.zh.md">中文</a> · <strong>English</strong>
 </p>
 
 </div>
 
 ---
 
-RipPatch 在 [AssetRipper](https://github.com/AssetRipper/AssetRipper) 的导出流程上做增强。
+RipPatch builds on [AssetRipper](https://github.com/AssetRipper/AssetRipper)'s export pipeline.
 
-AssetRipper 把游戏资源「搬」成工程，但那是**数据搬运，不是语义还原**——很多资源依赖
-编辑器在导入时重新计算的东西，原样搬运就是错的或缺失的。RipPatch 把这些补齐：
-导出的工程不是「能打开但跑不起来」，而是真的能编辑、能编译。
+AssetRipper moves assets from a game into a project, but that is **data relocation, not semantic
+restoration**. Plenty of assets depend on values the Unity editor recomputes at import time, so
+copying them verbatim produces output that is wrong or missing. RipPatch fills those gaps:
+the exported project is not "opens but won't run" — it can actually be edited and compiled.
 
-> 这是第三方工具，**不是 AssetRipper 的官方版本**，与上游项目没有隶属关系。
+> This is a third-party tool. It is **not an official AssetRipper release** and is not
+> affiliated with the upstream project.
 
-## 快速开始
+## Quick Start
 
-**不需要预装 .NET，也不需要 git。**
+**No .NET install, no git required.**
 
 ```
-双击 启动.cmd
+Double-click 启动.cmd
 ```
 
-第一次双击会自动准备环境、拉取依赖、编译（约 2–5 分钟）；之后再双击直接打开界面（几秒）。
-出错时窗口会停住显示原因，不会一闪而过。
+The first run prepares the environment, fetches dependencies and builds (about 2–5 minutes).
+After that it opens the UI directly in a few seconds. If something fails, the window stays open
+with the reason instead of flashing past.
 
-偏好命令行的等价做法：
+Prefer the command line:
 
 ```powershell
-.\tools\arp.ps1                    # 检查 + 构建 + 打开界面
-.\tools\arp.ps1 run <游戏> <输出>   # 命令行导出，不开界面
-.\tools\arp.ps1 doctor             # 只体检，不改动任何东西
+.\tools\arp.ps1                    # check + build + open the UI
+.\tools\arp.ps1 run <game> <out>   # export from the CLI, no UI
+.\tools\arp.ps1 doctor             # diagnostics only, changes nothing
 ```
 
-详细步骤、参数与排错见 **[使用指南](docs/USAGE.md)**。
+Full instructions, options and troubleshooting: **[Usage Guide](docs/USAGE.md)** (in Chinese).
 
-## 功能
+## Features
 
-### 浏览与预览
+### Browsing and preview
 
-- 按名称 / 类型 / 集合搜索，支持多关键词
-- **列表**与**缩略图网格**两种视图，网格视图一屏可扫几十张图
-- 图片、音频、视频、字体预览
-- **3D 模型预览**：拖拽旋转、滚轮缩放，无需任何第三方库
+- Search by name / type / collection, with multi-keyword support
+- **List** and **thumbnail grid** views — the grid shows dozens of images per screen
+- Preview images, audio, video and fonts
+- **3D model preview** with drag to rotate and wheel to zoom, no third-party library
 
-### 导出
+### Export
 
-| 方式 | 说明 |
+| Mode | Description |
 |---|---|
-| 整包导出 | 导出完整工程，可按类型筛选 |
-| 右键单文件 | 直接把一个资源存成 png / glb / wav / txt… |
-| 批量导出 | 多选后一次导出，失败项自动保留供重试 |
+| Full export | Export the complete project, filterable by asset type |
+| Right-click single file | Save one asset straight to png / glb / wav / txt… |
+| Batch export | Select many, export once; failures stay selected for retry |
 
-### 界面
+### Interface
 
-中英双语；深色 / 浅色 / **跟随系统**主题；桌面原生窗口或浏览器模式。
+Chinese and English; dark / light / **follow-system** themes; native desktop window or browser mode.
 
-## 修复了什么
+## What it fixes
 
-| 补丁 | 修复的问题 |
+| Patch | Problem it solves |
 |---|---|
-| **Shader** | 用内置反编译器替代占位 shader，输出可编译的 ShaderLab |
-| **Sprite 网格** | Tight 网格缺失时，按 Unity 的算法重新生成 vertices/indices |
-| **Sprite 轮廓** | 修复 `outline` / `physicsShape` 坐标系错位、`m_Pivot` 越界、Single/Multiple 模式误判 |
-| **Sprite 归属** | 同一个 Sprite 被两张图集纹理引用时导出会崩溃，改为只归第一张 |
-| **纯 alpha 纹理** | `Alpha8` 导出成白底透明图，而不是全黑 |
-| **旧版动态字体** | 清掉悬空图集引用，让 Unity 重新渲染 |
-| **脚本引用** | 补齐 `Plugins/` 与 `Packages/manifest.json` 里缺失的条目 |
-| **资源去重** | 内容相同的资源只导一份，其余改写成引用，不产生 Missing |
-| **MonoBehaviour 容错** | 结构不匹配时宽松读取并重试，日志限流 |
-| **TypeTree 容错** | 没有 C# 类接管的资源逐字段恢复，不再整条作废 |
-| **临时目录** | 清理上游导入残留的临时目录，避免占用几个 GB |
+| **Shader** | Replaces placeholder shaders with a built-in decompiler, emitting compilable ShaderLab |
+| **Sprite mesh** | Regenerates vertices/indices with Unity's algorithm when the tight mesh is missing |
+| **Sprite outline** | Fixes `outline` / `physicsShape` coordinate mismatches, out-of-range `m_Pivot`, and wrong Single/Multiple mode detection |
+| **Sprite ownership** | Export crashed when one sprite was referenced by two atlas textures; now the first one wins |
+| **Alpha-only textures** | `Alpha8` exports as a transparent white image instead of solid black |
+| **Legacy dynamic fonts** | Clears dangling atlas references so Unity re-renders the font |
+| **Script references** | Fills in missing entries in `Plugins/` and `Packages/manifest.json` |
+| **Asset deduplication** | Identical assets are exported once and rewritten as references, producing no Missing entries |
+| **MonoBehaviour tolerance** | Falls back to lenient reading with rate-limited logging when the layout does not match |
+| **TypeTree tolerance** | Assets without a C# class are recovered field by field instead of being discarded |
+| **Temp directory** | Cleans up temp directories left behind by imports, which can take gigabytes |
 
-## 已知限制
+## Known limitations
 
-**IL2CPP 元数据被加密的包无法还原脚本。**
-如果 `global-metadata.dat` 的开头不是 `AF 1B B1 FA`，说明它被保护过。此时资源能正常导出，
-但脚本类会是空的，Prefab 里的组件引用找不到对应类，UI 显示不出来。这是数据源的问题，
-工具层面无法解决。
+**Scripts cannot be recovered when the IL2CPP metadata is encrypted.**
+If `global-metadata.dat` does not start with `AF 1B B1 FA`, it has been protected. Assets still
+export fine, but script classes come out empty: component references in Prefabs cannot resolve,
+so UI does not render. This is a data-source problem that cannot be solved at the tool level.
 
-**无法打包成单个 exe。**
-本项目依赖 Harmony 做运行期补丁，而 Harmony 需要从磁盘加载 `clrjit.dll` 生成 IL stub，
-这个查找过程不认单文件打包的解压目录。发布方式是「自包含目录 + zip」，解压即用，
-目标机器不需要装 .NET。
+**It cannot be packaged as a single exe.**
+Harmony is used for runtime patching, and it needs to load `clrjit.dll` from disk to generate
+IL stubs — a lookup that does not recognise single-file bundle extraction directories. The
+distribution is therefore "self-contained folder + zip": unzip and run, no .NET install needed.
 
-**不保证对任意游戏通用。**
-部分补丁的坐标换算基于对具体游戏数据的逆向分析，换游戏可能需要重新校准。
+**Not guaranteed to work with every game.**
+Some patches compute coordinates from reverse-engineered data of specific games; a different
+game may need recalibration.
 
-## 文档
+## Docs
 
-| 文档 | 内容 |
+| Document | Contents |
 |---|---|
-| [使用指南](docs/USAGE.md) | 怎么用、参数、环境要求、排错 |
-| [JSON API](docs/json-api.md) | 后端接口，也是脚本化调用的入口 |
-| [第三方声明](docs/THIRD-PARTY-NOTICES.md) | 依赖组件与各自许可 |
+| [Usage Guide](docs/USAGE.md) | How to use it, options, requirements, troubleshooting (Chinese) |
+| [JSON API](docs/json-api.md) | Backend endpoints, also the entry point for scripting (English) |
+| [Third-Party Notices](docs/THIRD-PARTY-NOTICES.md) | Dependencies and their licenses |
 
-## 构建
+## Building
 
-需要 **.NET 10 SDK**。两个依赖以子模块引入，版本由 `tools/arp.ps1` 自动锁定：
+Requires the **.NET 10 SDK**. Two dependencies are vendored in-tree; `tools/arp.ps1` pins their versions:
 
-| 目录 | 内容 | 版本 |
+| Directory | Contents | Version |
 |---|---|---|
-| `AssetRipper/` | 上游本体 | `2.0.0` |
-| `ShaderRipper/` | shader 反编译器 | tag `v1.2.5` |
+| `AssetRipper/` | Upstream core | `2.0.0` |
+| `ShaderRipper/` | Shader decompiler | tag `v1.2.5` |
 
 ```powershell
-.\tools\arp.ps1 build      # 自动补 SDK、拉依赖、编译
-.\tools\arp.ps1 publish    # 发布到 publish/RipPatch-win-x64/
-.\tools\arp.ps1 package    # 发布 + 打包 zip（约 107 MB，解压即用）
-dotnet test RipPatch.slnx  # 155 个测试
+.\tools\arp.ps1 build      # install the SDK if needed, fetch deps, compile
+.\tools\arp.ps1 publish    # publish to publish/RipPatch-win-x64/
+.\tools\arp.ps1 package    # publish + zip (~107 MB, unzip and run)
+dotnet test RipPatch.slnx  # 155 tests
 ```
 
-> ShaderRipper 必须是 **v1.2.5+**：本项目调用 `Translate(model, includeDxbc)` 并读
-> `DxbcPrograms`，v1.2.4 编译不过。注意它在 v1.2.5 里 `csproj` 仍写着 `1.2.4`，
-> 判断版本只能看 tag。
+> ShaderRipper must be **v1.2.5+**: this project calls `Translate(model, includeDxbc)` and reads
+> `DxbcPrograms`, which does not compile on v1.2.4. Note that v1.2.5 still declares `1.2.4`
+> in its `csproj` — only the tag is trustworthy.
 
-### 结构与补丁写法
+### Structure and how patches are declared
 
 ```
 RipPatch/
-  Patches/          每个补丁一个文件，用 [PatchMethod] 注解声明目标
-  Patching/         注解、注册器、确定性重载排序
-  Sprites/          移植自 Unity 的 SpriteUtility + SpriteMeshGenerator
-  Shader/           shader 导出器
-  Api/              UI 的 JSON 端点
-  WebUi/            Photino 宿主 + wwwroot 前端资源（无框架）
-Assets/             图标（icon.svg / icon.ico / 各尺寸 png）
-tools/arp.ps1       一键：环境检查 / 拉依赖 / 构建 / 发布 / 运行
+  Patches/          one file per patch, target declared with [PatchMethod]
+  Patching/         attribute, registrar, deterministic overload ordering
+  Sprites/          SpriteUtility + SpriteMeshGenerator ported from Unity
+  Shader/           shader exporter
+  Api/              JSON endpoints for the UI
+  WebUi/            Photino host + wwwroot frontend (no framework)
+Assets/             icons (icon.svg / icon.ico / png at each size)
+tools/arp.ps1       one-click: environment check / fetch deps / build / publish / run
 ```
 
-补丁目标用注解声明，编译期由 Roslyn 分析器校验、运行期由注册器绑定，两侧共用同一份声明：
+Patch targets are declared once and shared by both sides: a Roslyn analyzer validates them at
+compile time and the registrar binds them at runtime.
 
 ```csharp
 [PatchMethod(typeof(ExportHandler), nameof(ExportHandler.Export), PatchType = PatchType.Postfix)]
 public static void DoSomething(GameData gameData, string outputPath, FileSystem fileSystem) { ... }
 ```
 
-分析器检查目标是否存在、重载索引是否越界、参数注入是否合法（HRP001/002/003…）。
-绑定失败在启动时直接抛异常，不静默跳过。
+The analyzer checks that the target exists, that overload indices are in range and that parameter
+injection is valid (HRP001/002/003…). A failed binding throws at startup rather than being skipped
+silently.
 
 ## License
 
-**GPL-3.0** —— 因为本项目链接了同样以 GPL-3.0 发布的 AssetRipper。
+**GPL-3.0** — because this project links AssetRipper, which is also GPL-3.0.
 
-这意味着**分发二进制时必须同时提供源码**，且不能改为闭源。详见 [License](License)。
+This means **binaries must be distributed together with their source**, and the project cannot be
+made closed-source. See [License](License) for details.
 
-## 致谢
+## Acknowledgements
 
-- [AssetRipper](https://github.com/AssetRipper/AssetRipper) —— 资源解析与工程导出（GPL-3.0）
-- [ShaderRipper](https://github.com/StArraySharp/ShaderRipper) —— shader 反编译（Apache-2.0 + GPL 链接例外）
-- [Harmony](https://github.com/pardeike/Harmony) —— 运行期补丁（MIT）
-- [Photino.NET](https://github.com/tryphotino/photino.NET) —— 原生窗口（Apache-2.0）
-- [Fluent UI](https://github.com/microsoft/fluentui) —— 界面组件（MIT）
+- [AssetRipper](https://github.com/AssetRipper/AssetRipper) — asset parsing and project export (GPL-3.0)
+- [ShaderRipper](https://github.com/StArraySharp/ShaderRipper) — shader decompilation (Apache-2.0 with GPL linking exception)
+- [Harmony](https://github.com/pardeike/Harmony) — runtime patching (MIT)
+- [Photino.NET](https://github.com/tryphotino/photino.NET) — native window (Apache-2.0)
+- [Fluent UI](https://github.com/microsoft/fluentui) — UI components (MIT)
 
-完整清单与许可副本见 [docs/THIRD-PARTY-NOTICES.md](docs/THIRD-PARTY-NOTICES.md)。
+The full list with license copies is in [docs/THIRD-PARTY-NOTICES.md](docs/THIRD-PARTY-NOTICES.md).
