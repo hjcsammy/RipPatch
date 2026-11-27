@@ -18,6 +18,12 @@
   <a href="README.zh.md">中文</a> · <strong>English</strong>
 </p>
 
+<p>
+  <a href="https://github.com/hjcsammy/RipPatch/releases/latest">
+    <img src="https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge" alt="Download">
+  </a>
+</p>
+
 </div>
 
 ---
@@ -34,10 +40,33 @@ the exported project is not "opens but won't run" — it can actually be edited 
 
 ## Quick Start
 
-**No .NET install, no git required.**
+### Just want to use it
+
+1. **[Download the latest release](https://github.com/hjcsammy/RipPatch/releases/latest)** (a ~107 MB zip)
+2. Extract it anywhere
+3. Double-click **`RipPatch.cmd`**
+
+That is all. **No .NET install, no git, no build step** — the runtime is bundled.
+
+The extracted folder looks like this:
 
 ```
-Double-click 启动.cmd
+RipPatch-1.0.0-win-x64\
+  RipPatch.cmd        <- double-click this
+  使用说明.txt         <- quick notes (Chinese)
+  RipPatch\           <- the program itself
+    RipPatch.exe
+```
+
+You do not need to open `RipPatch\` — it holds ~450 runtime files that have to sit next to
+the exe, so digging for the exe there is not the intended way to start it.
+
+### Building from source
+
+Clone the repo and run:
+
+```
+双击 启动.cmd        (or Start.cmd — same file)
 ```
 
 The first run prepares the environment, fetches dependencies and builds (about 2–5 minutes).

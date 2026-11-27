@@ -18,6 +18,12 @@
   <strong>中文</strong> · <a href="README.md">English</a>
 </p>
 
+<p>
+  <a href="https://github.com/hjcsammy/RipPatch/releases/latest">
+    <img src="https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge" alt="下载">
+  </a>
+</p>
+
 </div>
 
 ---
@@ -32,10 +38,33 @@ AssetRipper 把游戏资源「搬」成工程，但那是**数据搬运，不是
 
 ## 快速开始
 
-**不需要预装 .NET，也不需要 git。**
+### 只想用的话
+
+1. **[下载最新版本](https://github.com/hjcsammy/RipPatch/releases/latest)**（约 107 MB 的 zip）
+2. 解压到任意目录
+3. 双击 **`RipPatch.cmd`**
+
+就这样。**不用装 .NET、不用 git、不用编译**——运行时已经打包在里面。
+
+解压后是这样：
 
 ```
-双击 启动.cmd
+RipPatch-1.0.0-win-x64\
+  RipPatch.cmd        ← 双击这个
+  使用说明.txt
+  RipPatch\           ← 程序本体
+    RipPatch.exe
+```
+
+不用进 `RipPatch\` 找 exe——那里面有 450 个运行时文件，必须和 exe 待在一起，
+所以正确的启动方式是双击外面的 `RipPatch.cmd`。
+
+### 从源码构建
+
+克隆仓库后运行：
+
+```
+双击 启动.cmd        （或 Start.cmd，同一个文件）
 ```
 
 第一次双击会自动准备环境、拉取依赖、编译（约 2–5 分钟）；之后再双击直接打开界面（几秒）。
