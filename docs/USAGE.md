@@ -335,7 +335,7 @@ RipPatch\bin\Release\net10.0\RipPatch.exe --web --port 5199 --no-open
 .\tools\arp.ps1 package
 ```
 
-产物在仓库根目录：`RipPatch-<版本>-win-x64.zip`（约 107 MB，解压即用）。
+产物在仓库根目录：`RipPatch-<版本>-win-x64.zip`（约 107 MB）。
 
 版本号在 `RipPatch/RipPatch.csproj` 的 `<Version>` 里改。
 

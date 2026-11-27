@@ -951,7 +951,15 @@ function Invoke-Package {
     # 用 Compress-Archive 会把 pdb 也塞进去，所以先复制一份干净目录再压。
     $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("rippatch-pack-" + [guid]::NewGuid().ToString('N'))
     try {
-        $dest = Join-Path $staging 'RipPatch'
+        # 分两层：
+        #   RipPatch-<版本>-win-x64\       ← 解压出来的这一层
+        #     RipPatch.cmd                 ← 双击这个就启动，不用找 exe
+        #     RipPatch\                    ← 程序本体（420 个文件）
+        #       RipPatch.exe
+        # 程序本体必须保持平铺（.NET host 要求），所以只能靠外层放个入口脚本
+        # 来避免用户在几百个文件里翻找 exe。
+        $outer = Join-Path $staging "RipPatch-$version-win-x64"
+        $dest = Join-Path $outer 'RipPatch'
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
         # 这里必须用 -Path 而不是 -LiteralPath：要的是通配符展开。
         # 用 -LiteralPath 会把 "*" 当成字面文件名，一个文件都拷不过去。
@@ -962,9 +970,22 @@ function Invoke-Package {
         }
         Get-ChildItem -LiteralPath $dest -Recurse -File -Filter '*.pdb' | Remove-Item -Force -ErrorAction SilentlyContinue
 
+        # 外层放启动脚本和说明
+        $launcherSource = Join-Path $script:RepoRoot 'tools\dist-launcher.cmd'
+        if (Test-Path -LiteralPath $launcherSource) {
+            Copy-Item -LiteralPath $launcherSource -Destination (Join-Path $outer 'RipPatch.cmd') -Force
+        } else {
+            Write-Warn "找不到 tools\dist-launcher.cmd，包里不会有快捷启动脚本"
+        }
+
+        $readmeSource = Join-Path $script:RepoRoot 'tools\dist-readme.txt'
+        if (Test-Path -LiteralPath $readmeSource) {
+            Copy-Item -LiteralPath $readmeSource -Destination (Join-Path $outer '使用说明.txt') -Force
+        }
+
         # 注意：CreateFromDirectory 会把 staging 的「目录名」也写进条目，
         # 于是解压出来是 rippatch-pack-xxx\RipPatch\...，路径又长又随机。
-        # 这里逐条手动写入，让 zip 顶层就是 RipPatch\。
+        # 这里逐条手动写入，让 zip 顶层就是 RipPatch-<版本>-win-x64\。
         #
         # PowerShell 5.1 上 Add-Type 只加 FileSystem 时，ZipArchiveMode 这个枚举
         # 仍然找不到（它在 System.IO.Compression 里），所以两个都要加载。
@@ -989,7 +1010,7 @@ function Invoke-Package {
 
     $zipMb = [math]::Round((Get-Item -LiteralPath $zipPath).Length / 1MB, 1)
     Write-Ok "$zipName（$zipMb MB）"
-    Write-Info '解压后直接双击 RipPatch.exe，目标机器不需要装 .NET。'
+    Write-Info '解压后双击 RipPatch.cmd 即可启动，不需要在几百个文件里找 exe。'
     Write-Info '整个文件夹要一起分发，不要只给 exe。'
     $script:PackagedZip = $zipPath
 }
