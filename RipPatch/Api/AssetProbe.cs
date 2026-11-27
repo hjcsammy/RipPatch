@@ -54,7 +54,7 @@ internal static class AssetProbe
 	{
 		(int? width, int? height) = GetDimensions(asset);
 		return new AssetRowDto(
-			PathId: asset.PathID,
+			PathId: asset.PathID.ToString(CultureInfo.InvariantCulture),
 			ClassId: asset.ClassID,
 			ClassName: asset.ClassName,
 			Name: asset.GetBestName(),
