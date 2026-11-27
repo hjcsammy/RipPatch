@@ -1400,3 +1400,105 @@ fluent-checkbox {
     color: var(--colorNeutralForeground3, #9a9a9a);
     font-size: 10.5px;
 }
+/* ---- 字段过滤框 ---- */
+
+.fields__filter {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--colorNeutralStroke1, rgba(255, 255, 255, 0.12));
+    border-radius: 4px;
+    background: var(--colorNeutralBackground1, #1d2027);
+    color: var(--colorNeutralForeground1, #e6e8ec);
+    font-size: 12.5px;
+    font-family: inherit;
+}
+
+.fields__filter:focus {
+    outline: none;
+    border-color: var(--accent, #4cc2ff);
+}
+
+.fields__empty {
+    padding: 12px 0;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    font-size: 12.5px;
+}
+
+/* ---- 树节点可点击 ---- */
+
+.tree__link {
+    cursor: pointer;
+}
+
+.tree__link:hover {
+    color: var(--accent, #4cc2ff);
+    text-decoration: underline;
+}
+
+/* ---- 健康检查面板 ----
+   回答「这个工程导出来能不能用」，导出前先看一眼。 */
+
+.health {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--colorNeutralStroke1, rgba(255, 255, 255, 0.12));
+    border-radius: 6px;
+    background: var(--colorNeutralBackground2, #232833);
+}
+
+.health__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.health__title {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.health__stats {
+    margin-bottom: 10px;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    font-size: 12px;
+}
+
+.health__issues {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.health__issue {
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    border-left: 3px solid var(--colorNeutralStroke1, rgba(255, 255, 255, 0.12));
+    border-radius: 4px;
+    background: var(--colorNeutralBackground1, #1d2027);
+}
+
+.health__issue--ok {
+    border-left-color: #54d17a;
+}
+
+.health__issue--warning {
+    border-left-color: #ffc86b;
+}
+
+.health__issue--error {
+    border-left-color: #ff6b6b;
+}
+
+.health__issue-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    margin-bottom: 3px;
+}
+
+.health__issue-detail {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--colorNeutralForeground2, #c5c9d3);
+}

@@ -141,6 +141,18 @@ internal static class ApiEndpoints
 		int offset = ParseInt(request.Query["offset"], 0);
 		int limit = Math.Clamp(ParseInt(request.Query["limit"], 200), 1, MaxLimit);
 
+		// 按 pathId 精确取一个资源。组件树里点节点时用：树节点只知道 pathId，
+		// 用它换回完整的 AssetRowDto 才能在列表里选中并打开详情。
+		// pathId 用 string 接，避免 long 在 JSON 里的精度问题传导到 URL 上。
+		string? pathIdText = request.Query["pathId"];
+		if (!string.IsNullOrEmpty(pathIdText) && long.TryParse(pathIdText, out long wantedPathId))
+		{
+			IUnityObjectBase? found = FindAssetByPathId(wantedPathId, request.Query["path"]);
+			return Results.Json(found is null
+				? new PageDto<AssetRowDto>([], 0, 0, 0)
+				: new PageDto<AssetRowDto>(new[] { AssetProbe.ToRow(found) }, 1, 0, 1));
+		}
+
 		IReadOnlyList<IUnityObjectBase> assets = AssetCatalog.Query(search, className, collection, sort, descending, offset, limit, out int total);
 		List<AssetRowDto> rows = new(assets.Count);
 		foreach (IUnityObjectBase asset in assets)
@@ -211,6 +223,31 @@ internal static class ApiEndpoints
 				OriginalPath: asset.OriginalPath ?? asset.OverridePath,
 				Properties: properties,
 								Previews: previews));
+	}
+
+	/// <summary>
+	/// 按 pathId 找一个资源。给了 collectionPath 就直接定位（O(1)）；
+	/// 没给就扫一遍索引（几万资源也就几十毫秒，作为兜底足够）。
+	/// </summary>
+	private static IUnityObjectBase? FindAssetByPathId(long pathId, string? collectionPathJson)
+	{
+		if (!string.IsNullOrEmpty(collectionPathJson))
+		{
+			IUnityObjectBase? direct = AssetProbe.FindAsset(collectionPathJson, pathId);
+			if (direct is not null)
+			{
+				return direct;
+			}
+		}
+
+		foreach (IUnityObjectBase asset in AssetCatalog.Query(null, null, null, null, false, 0, MaxLimit, out _))
+		{
+			if (asset.PathID == pathId)
+			{
+				return asset;
+			}
+		}
+		return null;
 	}
 
 	private static IResult GetAssetText(HttpRequest request)

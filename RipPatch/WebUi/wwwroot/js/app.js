@@ -1159,10 +1159,46 @@ function renderMonoFields(body, result) {
     summary.textContent = t('detail.fieldsCount', '', { count: result.fieldCount, type: result.root?.type || '' });
     host.append(summary);
 
+    // 过滤框：一个 UI 组件常有几十个字段，找「文字在哪个字段」得往下翻。
+    // 支持按字段名和值双向匹配。
+    const filter = document.createElement('input');
+    filter.type = 'search';
+    filter.className = 'fields__filter';
+    filter.placeholder = t('detail.fieldsFilter');
+    host.append(filter);
+
+    const empty = document.createElement('p');
+    empty.className = 'fields__empty';
+    empty.textContent = t('detail.fieldsNoMatch');
+    empty.hidden = true;
+    host.append(empty);
+
     const table = document.createElement('table');
     table.className = 'fields__table';
     table.append(buildFieldRows(result.root, 0));
     host.append(table);
+
+    filter.addEventListener('input', () => {
+        const keyword = filter.value.trim().toLowerCase();
+        let visible = 0;
+        // 逐行判断：字段名或值命中就显示，否则隐藏。
+        // 嵌套子行跟着父行一并隐藏，避免出现「孤儿子项」。
+        for (const row of table.querySelectorAll('.fields__row')) {
+            if (!keyword) {
+                row.hidden = row.classList.contains('fields__child');
+                continue;
+            }
+            const name = (row.querySelector('.fields__name')?.textContent || '').toLowerCase();
+            const value = (row.querySelector('.fields__value')?.textContent || '').toLowerCase();
+            const type = (row.querySelector('.fields__type')?.textContent || '').toLowerCase();
+            const hit = name.includes(keyword) || value.includes(keyword) || type.includes(keyword);
+            row.hidden = !hit;
+            if (hit) {
+                visible++;
+            }
+        }
+        empty.hidden = !keyword || visible > 0;
+    });
 
     body.replaceChildren(host);
 }
@@ -1324,7 +1360,37 @@ function buildTreeItem(node, depth) {
         row.append(tag);
     }
 
+    // 点节点跳到对应资源的详情。
+    // 树里的组件往往正是要改的那个（Image 的 sprite、Text 的文案），
+    // 之前只能自己回列表按 pathId 找，很难用。
+    if (node.pathId && node.pathId !== '0') {
+        label.classList.add('tree__link');
+        label.title = t('detail.treeJump');
+        label.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openAssetByPathId(node.pathId, node.collectionPath);
+        });
+    }
+
     return item;
+}
+
+/**
+ * 按 pathId 打开资源详情：先查回完整的 row，再走正常的选中流程。
+ * 这样详情面板、标签页、面包屑都会和从列表点进来完全一致。
+ */
+async function openAssetByPathId(pathId, collectionPath) {
+    try {
+        const page = await api.assets({ pathId, path: collectionPath, limit: 1 });
+        const row = page?.items?.[0];
+        if (!row) {
+            return;
+        }
+        state.selected = { path: row.collectionPath, pathId: row.pathId, row };
+        await selectAsset(row, null);
+    } catch (error) {
+        // 跳转失败不该打断当前浏览，忽略即可
+    }
 }
 
 function renderPreview(body, detail) {
@@ -1928,6 +1994,57 @@ async function pickOutputFolder() {
     }
 }
 
+/**
+ * 工程健康检查：导出前回答「这个工程导出来能不能用」。
+ *
+ * 检查脚本类能否解析（解析不出来 = Unity 里全是 Missing）、
+ * 字段是否为空（元数据加密的典型表现）、GameObject 是否缺组件。
+ * 结果直接展开在导出按钮下面，不需要去翻日志。
+ */
+async function runHealthCheck() {
+    const panel = $('health-panel');
+    const stats = $('health-stats');
+    const issues = $('health-issues');
+    const button = $('btn-health');
+
+    panel.hidden = false;
+    stats.replaceChildren();
+    issues.replaceChildren();
+    button.disabled = true;
+    stats.textContent = t('health.running');
+
+    try {
+        const report = await api.health();
+
+        // 概要：扫描量 + 脚本解析情况
+        const parts = [
+            t('health.scanned', '', { count: report.totalAssets }),
+            t('health.scripts', '', {
+                resolved: report.scriptsResolved,
+                total: report.monoBehaviourCount,
+            }),
+        ];
+        stats.textContent = parts.join(' · ');
+
+        for (const issue of report.issues) {
+            const li = document.createElement('li');
+            li.className = `health__issue health__issue--${issue.severity}`;
+            const title = document.createElement('div');
+            title.className = 'health__issue-title';
+            title.textContent = issue.count > 0 ? `${issue.title}（${issue.count}）` : issue.title;
+            const detail = document.createElement('div');
+            detail.className = 'health__issue-detail';
+            detail.textContent = issue.detail;
+            li.append(title, detail);
+            issues.append(li);
+        }
+    } catch (error) {
+        stats.textContent = `${t('common.readFailed')}: ${error.message}`;
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function startExport() {
     if (!state.loaded) {
         toast(t('export.needLoad'), 'error');
@@ -2450,6 +2567,10 @@ function bind() {
 
     $('btn-pick-output').addEventListener('click', pickOutputFolder);
     $('btn-export').addEventListener('click', startExport);
+    $('btn-health').addEventListener('click', runHealthCheck);
+    $('btn-health-close').addEventListener('click', () => {
+        $('health-panel').hidden = true;
+    });
         bindDetailGutter();
         $('btn-reset').addEventListener('click', doReset);
     $('btn-open-output').addEventListener('click', () => {
