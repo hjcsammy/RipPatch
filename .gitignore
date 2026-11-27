@@ -101,3 +101,4 @@ RipPatch-*-win-x64/
 
 # 发布说明草稿（发布工具生成）
 .release-notes.md
+.release-notes-v*.md
