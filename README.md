@@ -14,6 +14,10 @@
   <a href="#构建">构建</a>
 </p>
 
+<p>
+  <strong>中文</strong> · <a href="README.en.md">English</a>
+</p>
+
 </div>
 
 ---
