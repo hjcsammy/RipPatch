@@ -48,6 +48,15 @@ internal static class ApiEndpoints
 		api.MapGet("/assets/json", GetAssetJson);
 		api.MapGet("/assets/yaml", GetAssetYaml);
 
+		// ---- 脚本字段解码（把 MonoBehaviour 的字段值列成表，不用读 YAML）----
+		api.MapGet("/assets/fields", GetAssetFields);
+
+		// ---- 组件树（还原 Prefab / 场景层级）----
+		api.MapGet("/assets/tree", GetAssetTree);
+
+		// ---- 工程健康检查（导出前评估能不能用）----
+		api.MapGet("/health", GetHealth);
+
 		// ---- 单资源导出（右键菜单用）----
 		api.MapPost("/assets/export", ExportSingleAsset);
 
@@ -193,7 +202,7 @@ internal static class ApiEndpoints
 
 		return Results.Json(
 			new AssetDetailDto(
-				PathId: asset.PathID,
+				PathId: asset.PathID.ToString(System.Globalization.CultureInfo.InvariantCulture),
 				ClassId: asset.ClassID,
 				ClassName: asset.ClassName,
 				Name: asset.GetBestName(),
@@ -232,6 +241,39 @@ internal static class ApiEndpoints
 		}
 		string? yaml = AssetProbe.GetYaml(asset);
 		return yaml is null ? Results.NotFound() : Results.Text(yaml, "application/yaml; charset=utf-8");
+	}
+
+	/// <summary>工程健康检查：脚本能否解析、字段是否为空、层级是否完整。</summary>
+	private static IResult GetHealth()
+	{
+		return Results.Json(ProjectHealth.Check());
+	}
+
+	/// <summary>
+	/// 还原资源所在的组件层级树。只有 GameObject / 组件类资源有树，
+	/// 其它类型返回 204（前端据此不显示「层级」标签）。
+	/// </summary>
+	private static IResult GetAssetTree(HttpRequest request)
+	{
+		if (!TryGetAsset(request, out IUnityObjectBase? asset))
+		{
+			return Results.NotFound("找不到资源。");
+		}
+		ComponentTreeDto? tree = ComponentTreeBuilder.Build(asset);
+		return tree is null ? Results.NoContent() : Results.Json(tree);
+	}
+
+	/// <summary>
+	/// 把 MonoBehaviour 的字段值解码成结构化列表。不是 MonoBehaviour 时返回
+	/// IsAvailable=false 而不是 404——前端据此显示「这里没有脚本字段」比报错友好。
+	/// </summary>
+	private static IResult GetAssetFields(HttpRequest request)
+	{
+		if (!TryGetAsset(request, out IUnityObjectBase? asset))
+		{
+			return Results.NotFound("找不到资源。");
+		}
+		return Results.Json(MonoBehaviourFields.Decode(asset));
 	}
 
 	#endregion

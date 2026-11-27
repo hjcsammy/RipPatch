@@ -56,6 +56,11 @@ export const api = {
     text: (path, pathId) => request(`/api/assets/text?path=${encodeURIComponent(path)}&pathId=${pathId}`),
     assetJson: (path, pathId) => request(`/api/assets/json?path=${encodeURIComponent(path)}&pathId=${pathId}`),
     assetYaml: (path, pathId) => request(`/api/assets/yaml?path=${encodeURIComponent(path)}&pathId=${pathId}`),
+    assetFields: (path, pathId) => request(`/api/assets/fields?path=${encodeURIComponent(path)}&pathId=${pathId}`),
+    // 组件树：只有 GameObject / 组件类资源有树，其它返回 204
+    assetTree: (path, pathId) => request(`/api/assets/tree?path=${encodeURIComponent(path)}&pathId=${pathId}`),
+    // 工程健康检查
+    health: () => request('/api/health'),
 
     imageUrl: (path, pathId, ext) =>
         `/api/assets/image?path=${encodeURIComponent(path)}&pathId=${pathId}${ext ? `&ext=${ext}` : ''}`,

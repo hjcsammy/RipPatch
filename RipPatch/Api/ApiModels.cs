@@ -35,8 +35,15 @@ public sealed record TreeNodeDto(
 	IReadOnlyList<TreeNodeDto>? Children);
 
 /// <summary>资源列表中的一行。字段刻意保持精简：列表可能上万行。</summary>
+/// <remarks>
+/// <b>PathId 用 string 而不是 long。</b>Unity 的 pathId 是 64 位有符号整数，
+/// 实际值经常超过 2^53（例如 2945135793888757533），而 JavaScript 的 Number
+/// 是 IEEE 754 双精度，只能精确表示到 2^53。用数字传过去会被截断成
+/// 2945135793888758000，前端再拿它请求详情就会「找不到资源」。
+/// 这类 bug 只在部分资源上出现，特别难查，所以统一按字符串传。
+/// </remarks>
 public sealed record AssetRowDto(
-	long PathId,
+	string PathId,
 	int ClassId,
 	string ClassName,
 	string Name,
@@ -61,8 +68,11 @@ public sealed record PageDto<T>(
 	int Limit);
 
 /// <summary>资源详情：属性表 + 可用预览。</summary>
+/// <summary>资源详情面板用的数据。</summary>
+/// <remarks>PathId 必须是 string：这是前端拿去请求其它接口的主键，
+/// 用数字会因 JS 精度问题被截断，导致后续请求全部 404。</remarks>
 public sealed record AssetDetailDto(
-	long PathId,
+	string PathId,
 	int ClassId,
 	string ClassName,
 	string Name,
@@ -73,6 +83,46 @@ public sealed record AssetDetailDto(
 	IReadOnlyList<string> Previews);
 
 public sealed record PropertyDto(string Name, string Value);
+
+/// <summary>
+/// MonoBehaviour 字段解码结果。
+/// IsAvailable = false 时 Message 说明原因（不是 MonoBehaviour、元数据加密等）。
+/// </summary>
+public sealed record MonoFieldsDto(
+	bool IsAvailable,
+	string? Message,
+	int FieldCount,
+	MonoFieldDto? Root);
+
+/// <summary>一个脚本字段。Children 非空表示可展开。</summary>
+public sealed record MonoFieldDto(
+	string Name,
+	string Type,
+	string Value,
+	bool IsReference,
+	string RefPathId,
+	IReadOnlyList<MonoFieldDto>? Children);
+
+/// <summary>Prefab 组件树的一个节点。</summary>
+/// <summary>Prefab 组件树的一个节点。PathId 用 string，理由同 AssetRowDto。</summary>
+public sealed record ComponentTreeDto(
+	string Name,
+	string ClassName,
+	string PathId,
+	string? CollectionPath,
+	IReadOnlyList<ComponentTreeDto> Children);
+
+/// <summary>工程健康检查报告。</summary>
+public sealed record HealthReportDto(
+	int TotalAssets,
+	int MonoBehaviourCount,
+	int ScriptsResolved,
+	int ScriptsMissing,
+	int PrefabCount,
+	int BrokenReferences,
+	IReadOnlyList<HealthIssueDto> Issues);
+
+public sealed record HealthIssueDto(string Severity, string Title, string Detail, int Count);
 
 /// <summary>设置项的一个枚举选项，带显示名和说明。</summary>
 public sealed record SettingOptionDto(
