@@ -197,6 +197,33 @@ silently.
 This means **binaries must be distributed together with their source**, and the project cannot be
 made closed-source. See [License](License) for details.
 
+## Origin and what this project changes
+
+This project is a modified version of
+[StArraySharp/AssetRipperPatcher](https://github.com/StArraySharp/AssetRipperPatcher) (GPL-3.0).
+**The core architecture and most patch implementations come from that project**, including:
+
+- The patch registration mechanism (`[PatchMethod]` attribute + Roslyn analyzer + runtime binding)
+- The shader decompilation export pipeline
+- The sprite mesh generator (ported from Unity's `SpriteUtility` / `SpriteMeshGenerator`)
+- Most of the existing patches
+
+**What this project changes and adds**:
+
+| Area | Change |
+|---|---|
+| Branding | Renamed project / namespaces / artifacts to RipPatch (was AssetRipperPatcher) |
+| New patches | Sprite ownership conflict (export crashed when a sprite was referenced by two atlas textures), temp directory cleanup, exposed LoadedGameData |
+| New feature | Single-asset export, with a path guard that refuses to write into or delete your home/desktop/system folders |
+| UI | Thumbnail grid view, 3D model preview, batch export, export type filter, dark / light / follow-system themes |
+| Tooling | `tools/arp.ps1` one-click build, `启动.cmd` launcher, release packaging pipeline |
+| Docs | All READMEs, usage guide, icons |
+
+Copyright in the original code remains with its original author. This project as a whole
+continues to be distributed under **GPL-3.0**.
+
+> If you build on this project, GPL-3.0 applies to you as well — please keep this section.
+
 ## Acknowledgements
 
 - [AssetRipper](https://github.com/AssetRipper/AssetRipper) — asset parsing and project export (GPL-3.0)

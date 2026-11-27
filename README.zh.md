@@ -190,6 +190,31 @@ public static void DoSomething(GameData gameData, string outputPath, FileSystem 
 
 这意味着**分发二进制时必须同时提供源码**，且不能改为闭源。详见 [License](License)。
 
+## 来源与本项目改动
+
+本项目基于 [StArraySharp/AssetRipperPatcher](https://github.com/StArraySharp/AssetRipperPatcher)
+（GPL-3.0）修改而来。**核心架构与大部分补丁实现来自原项目**，包括：
+
+- 补丁注册机制（`[PatchMethod]` 注解 + Roslyn 分析器校验 + 运行期绑定）
+- Shader 反编译导出流程
+- Sprite 网格生成器（移植自 Unity 的 `SpriteUtility` / `SpriteMeshGenerator`）
+- 现有的多数 Patches 实现
+
+**本项目相对原项目做了什么**：
+
+| 类别 | 改动 |
+|---|---|
+| 品牌 | 项目/命名空间/产物重命名为 RipPatch（原 AssetRipperPatcher） |
+| 新增补丁 | Sprite 归属冲突（同一 sprite 被两张图集引用时导出崩溃）、临时目录清理、LoadedGameData 暴露 |
+| 新增功能 | 单文件导出（含路径护栏，防止误删用户目录） |
+| 界面增强 | 缩略图网格视图、3D 模型预览、批量导出、导出类型筛选、深/浅/跟随系统主题 |
+| 工具链 | `tools/arp.ps1` 一键构建、`启动.cmd` 启动器、发布打包流程 |
+| 文档 | 全部 README / 使用指南 / 图标 |
+
+原有代码的著作权归原作者所有，本项目整体继续以 **GPL-3.0** 分发。
+
+> 如果你要基于本项目继续改，同样适用 GPL-3.0，也请保留这一段。
+
 ## 致谢
 
 - [AssetRipper](https://github.com/AssetRipper/AssetRipper) —— 资源解析与工程导出（GPL-3.0）
