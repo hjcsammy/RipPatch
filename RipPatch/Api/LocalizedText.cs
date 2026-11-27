@@ -1,4 +1,4 @@
-namespace RipPatch.Api;
+﻿namespace RipPatch.Api;
 
 /// <summary>
 /// 界面文案的集中定义。
@@ -149,6 +149,15 @@ internal static class LocalizedText
             ["detail.fieldsUnavailable"] = "这个资源没有可解码的脚本字段。",
 		["detail.tab.tree"] = "层级",
 		["detail.treeUnavailable"] = "这个资源没有组件层级（只有 GameObject 和组件才显示）。",
+		["detail.fieldsFilter"] = "过滤字段名或值…",
+		["detail.fieldsNoMatch"] = "没有匹配的字段。",
+		["detail.treeJump"] = "点击打开这个资源",
+		["export.health"] = "检查工程",
+		["health.title"] = "工程健康检查",
+		["health.close"] = "收起",
+		["health.running"] = "检查中…",
+		["health.scanned"] = "扫描 {count} 个资源",
+		["health.scripts"] = "脚本 {resolved}/{total} 可解析",
             ["detail.fieldsCount"] = "{count} 个字段 · {type}",
             ["detail.fieldRefHint"] = "引用 pathId {id}",
 		["detail.downloadGlb"] = "下载 GLB 模型",
@@ -424,6 +433,15 @@ internal static class LocalizedText
             ["detail.fieldsUnavailable"] = "This asset has no decodable script fields.",
 		["detail.tab.tree"] = "Hierarchy",
 		["detail.treeUnavailable"] = "This asset has no component hierarchy (only GameObjects and components do).",
+		["detail.fieldsFilter"] = "Filter by field name or value…",
+		["detail.fieldsNoMatch"] = "No matching fields.",
+		["detail.treeJump"] = "Click to open this asset",
+		["export.health"] = "Check project",
+		["health.title"] = "Project health",
+		["health.close"] = "Collapse",
+		["health.running"] = "Checking…",
+		["health.scanned"] = "Scanned {count} assets",
+		["health.scripts"] = "scripts {resolved}/{total} resolved",
             ["detail.fieldsCount"] = "{count} fields · {type}",
             ["detail.fieldRefHint"] = "references pathId {id}",
 		["detail.downloadGlb"] = "Download GLB model",

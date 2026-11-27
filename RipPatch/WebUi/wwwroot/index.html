@@ -252,7 +252,17 @@
                     </div>
                     <div class="row">
                         <fluent-button appearance="accent" id="btn-export" data-i18n="export.start"></fluent-button>
+                        <fluent-button appearance="outline" id="btn-health" data-i18n="export.health"></fluent-button>
                         <fluent-button appearance="subtle" id="btn-open-output" disabled data-i18n="export.openOutput"></fluent-button>
+                    </div>
+                    <!-- 健康检查结果：点「检查工程」后展开，回答「这个工程导出来能不能用」 -->
+                    <div class="health" id="health-panel" hidden>
+                        <div class="health__head">
+                            <span class="health__title" data-i18n="health.title"></span>
+                            <fluent-button appearance="subtle" id="btn-health-close" data-i18n="health.close"></fluent-button>
+                        </div>
+                        <div class="health__stats" id="health-stats"></div>
+                        <ul class="health__issues" id="health-issues"></ul>
                     </div>
                     <div class="progress-block" id="export-progress" hidden>
                         <div class="progress-block__row">

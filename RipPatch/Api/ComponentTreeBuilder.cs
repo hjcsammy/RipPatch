@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using AssetRipper.Assets;
 using AssetRipper.Assets.Generics;
+using AssetRipper.GUI.Web.Paths;
 using AssetRipper.SourceGenerated.Classes.ClassID_1;
 using AssetRipper.SourceGenerated.Classes.ClassID_2;
 using AssetRipper.SourceGenerated.Extensions;
@@ -120,7 +121,7 @@ internal static class ComponentTreeBuilder
 					string.IsNullOrEmpty(label) ? classLabel : label,
 					classLabel,
 					component.PathID.ToString(CultureInfo.InvariantCulture),
-					null,
+					GetCollectionJson(component),
 					null));
 			}
 		}
@@ -144,7 +145,7 @@ internal static class ComponentTreeBuilder
 			name,
 			"GameObject",
 			gameObject.PathID.ToString(CultureInfo.InvariantCulture),
-			null,
+			GetCollectionJson(gameObject),
 			children);
 	}
 
@@ -152,6 +153,22 @@ internal static class ComponentTreeBuilder
 	/// 源生成器产出的类名带有 Unity 版本后缀，如 MonoBehaviour_2019_1_0_b4、
 	/// RectTransform_2023_2_0_a19。展示时去掉后缀，只留类名。
 	/// </summary>
+	/// <summary>
+	/// 集合路径（JSON）。前端点树节点时用它把 pathId 精确映射回资源，
+	/// 不传的话后端得全量扫索引，慢且可能重名。
+	/// </summary>
+	private static string? GetCollectionJson(IUnityObjectBase asset)
+	{
+		try
+		{
+			return asset.Collection?.GetPath().ToJson();
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
 	private static string NormalizeClassName(string name)
 	{
 		int index = name.IndexOf('_');
