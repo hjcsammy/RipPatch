@@ -1036,6 +1036,14 @@ function renderDetail() {
     if (detail.previews?.includes('yaml')) {
         tabs.push(['yaml', 'detail.tab.yaml']);
     }
+    // 字段解码器：只有 MonoBehaviour 才有脚本字段，其它资源不显示这个标签
+    if (detail.className === 'MonoBehaviour') {
+        tabs.push(['fields', 'detail.tab.fields']);
+    }
+    // 组件层级：GameObject 与各类组件都能爬到所属根节点，其它资源不显示
+    if (detail.className === 'GameObject' || isComponentClass(detail.className)) {
+        tabs.push(['tree', 'detail.tab.tree']);
+    }
 
     if (!tabs.some(([key]) => key === state.detailTab)) {
         state.detailTab = tabs[0][0];
@@ -1093,6 +1101,27 @@ function renderDetailBody(body, detail, tab) {
     }
 
     body.innerHTML = `<div class="detail__placeholder">${t('common.loading')}</div>`;
+
+    // 字段解码走单独的接口，返回的是结构而不是文本
+    if (tab === 'fields') {
+        api.assetFields(detail.collectionPath, detail.pathId).then((result) => {
+            renderMonoFields(body, result);
+        }).catch((error) => {
+            body.innerHTML = `<div class="detail__placeholder">${escapeHtml(t('common.readFailed'))}: ${escapeHtml(error.message)}</div>`;
+        });
+        return;
+    }
+
+    // 组件层级树
+    if (tab === 'tree') {
+        api.assetTree(detail.collectionPath, detail.pathId).then((tree) => {
+            renderComponentTree(body, tree);
+        }).catch((error) => {
+            body.innerHTML = `<div class="detail__placeholder">${escapeHtml(t('common.readFailed'))}: ${escapeHtml(error.message)}</div>`;
+        });
+        return;
+    }
+
     const loader = tab === 'text'
         ? api.text(detail.collectionPath, detail.pathId)
         : tab === 'json'
@@ -1107,6 +1136,195 @@ function renderDetailBody(body, detail, tab) {
     }).catch((error) => {
         body.innerHTML = `<div class="detail__placeholder">${escapeHtml(t('common.readFailed'))}: ${escapeHtml(error.message)}</div>`;
     });
+}
+
+/**
+ * 渲染 MonoBehaviour 的字段表。
+ *
+ * 为什么要有这个：界面原来只给了原始 YAML，字段名、类型、值要自己对照着读。
+ * 改 UI 时找「这个按钮的文案存在哪个字段」非常费劲。这里直接列成表，
+ * 嵌套结构可以展开。
+ */
+function renderMonoFields(body, result) {
+    if (!result?.isAvailable) {
+        body.innerHTML = `<div class="detail__placeholder">${escapeHtml(result?.message || t('detail.fieldsUnavailable'))}</div>`;
+        return;
+    }
+
+    const host = document.createElement('div');
+    host.className = 'fields';
+
+    const summary = document.createElement('p');
+    summary.className = 'fields__summary';
+    summary.textContent = t('detail.fieldsCount', '', { count: result.fieldCount, type: result.root?.type || '' });
+    host.append(summary);
+
+    const table = document.createElement('table');
+    table.className = 'fields__table';
+    table.append(buildFieldRows(result.root, 0));
+    host.append(table);
+
+    body.replaceChildren(host);
+}
+
+/** 递归生成字段行。嵌套字段带上展开标记。 */
+function buildFieldRows(node, depth) {
+    const fragment = document.createDocumentFragment();
+    if (!node) {
+        return fragment;
+    }
+
+    const children = node.children || [];
+    const tr = document.createElement('tr');
+    tr.className = 'fields__row';
+    if (node.isReference) {
+        tr.classList.add('is-reference');
+    }
+
+    const nameCell = document.createElement('td');
+    nameCell.className = 'fields__name';
+    nameCell.style.paddingLeft = `${8 + depth * 14}px`;
+
+    if (children.length > 0) {
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'fields__toggle';
+        toggle.textContent = '▸';
+        toggle.addEventListener('click', () => {
+            tr.classList.toggle('is-open');
+            toggle.textContent = tr.classList.contains('is-open') ? '▾' : '▸';
+        });
+        nameCell.append(toggle);
+    }
+    nameCell.append(document.createTextNode(node.name));
+    tr.append(nameCell);
+
+    const typeCell = document.createElement('td');
+    typeCell.className = 'fields__type';
+    typeCell.textContent = node.type || '';
+    tr.append(typeCell);
+
+    const valueCell = document.createElement('td');
+    valueCell.className = 'fields__value';
+    valueCell.textContent = node.value ?? '';
+    if (node.isReference && node.refPathId) {
+        valueCell.classList.add('is-link');
+        valueCell.title = t('detail.fieldRefHint', '', { id: node.refPathId });
+    }
+    tr.append(valueCell);
+
+    fragment.append(tr);
+
+    for (const child of children) {
+        const childRows = buildFieldRows(child, depth + 1);
+        for (const row of Array.from(childRows.children)) {
+            row.classList.add('fields__child');
+            // 默认折叠，点上层的箭头才显示
+            row.hidden = true;
+            tr.dataset.hasChildren = '1';
+        }
+        fragment.append(childRows);
+    }
+
+    return fragment;
+}
+
+/**
+ * 判断某个类名是不是 Unity 组件（挂在 GameObject 上的东西）。
+ * 组件和 GameObject 都能沿 Transform 爬到根，所以都适合显示层级树。
+ * 用后缀匹配，避免维护一张几百个类名的清单。
+ */
+const COMPONENT_SUFFIXES = ['Transform', 'Renderer', 'Collider', 'Behaviour', 'Canvas',
+    'Animator', 'Graphic', 'Image', 'Text', 'Button', 'Slider', 'Toggle', 'Scrollbar',
+    'LayoutGroup', 'Mask', 'Filter', 'Effects', 'RectTransform'];
+
+function isComponentClass(className) {
+    if (!className) {
+        return false;
+    }
+    return COMPONENT_SUFFIXES.some((suffix) => className.endsWith(suffix)) || className === 'MonoBehaviour';
+}
+
+/**
+ * 渲染组件层级树。
+ *
+ * 为什么有用：Unity 的 Prefab 导出后是一堆平铺的 YAML，靠 fileID 互相引用，
+ * 人眼基本无法顺着读。这里还原成「父节点 → 子节点 + 组件」的树，
+ * 改 UI 时能直接看出结构。
+ */
+function renderComponentTree(body, tree) {
+    if (!tree) {
+        body.innerHTML = `<div class="detail__placeholder">${escapeHtml(t('detail.treeUnavailable'))}</div>`;
+        return;
+    }
+
+    const host = document.createElement('div');
+    host.className = 'tree';
+
+    const root = document.createElement('ul');
+    root.className = 'tree__list';
+    root.append(buildTreeItem(tree, 0));
+    host.append(root);
+    body.replaceChildren(host);
+}
+
+function buildTreeItem(node, depth) {
+    const item = document.createElement('li');
+    item.className = 'tree__item';
+
+    const row = document.createElement('div');
+    row.className = 'tree__row';
+    row.style.paddingLeft = `${depth * 12}px`;
+
+    const children = node.children || [];
+    // 组件节点不再往下展开（它们没有子项），只有 GameObject 有展开箭头
+    const expandable = node.className === 'GameObject' && children.length > 0;
+
+    if (expandable) {
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'tree__toggle';
+        toggle.textContent = '▸';
+        row.append(toggle);
+
+        const list = document.createElement('ul');
+        list.className = 'tree__list';
+        list.hidden = true;
+        for (const child of children) {
+            list.append(buildTreeItem(child, depth + 1));
+        }
+        // 默认展开第一层，更深的手动点
+        if (depth === 0) {
+            list.hidden = false;
+            toggle.textContent = '▾';
+        }
+
+        toggle.addEventListener('click', () => {
+            list.hidden = !list.hidden;
+            toggle.textContent = list.hidden ? '▸' : '▾';
+        });
+        item.append(row, list);
+    } else {
+        // 占位，保持缩进对齐
+        const spacer = document.createElement('span');
+        spacer.className = 'tree__spacer';
+        row.append(spacer);
+        item.append(row);
+    }
+
+    const label = document.createElement('span');
+    label.className = node.className === 'GameObject' ? 'tree__name' : 'tree__comp';
+    label.textContent = node.name || `#${node.pathId}`;
+    row.append(label);
+
+    if (node.className !== 'GameObject') {
+        const tag = document.createElement('span');
+        tag.className = 'tree__tag';
+        tag.textContent = node.className;
+        row.append(tag);
+    }
+
+    return item;
 }
 
 function renderPreview(body, detail) {

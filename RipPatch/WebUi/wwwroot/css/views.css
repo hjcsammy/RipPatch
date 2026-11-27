@@ -453,6 +453,88 @@ body.is-resizing {
     word-break: break-all;
 }
 
+/* ---- MonoBehaviour 字段表 ----
+   把脚本字段列成三列（名/类型/值），嵌套结构可展开。
+   相比直接看 YAML，找「这个按钮的文案在哪个字段」快得多。 */
+
+.fields {
+    overflow: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.fields__summary {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+}
+
+.fields__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    font-family: Consolas, 'Cascadia Mono', monospace;
+}
+
+.fields__row {
+    border-bottom: 1px solid var(--colorNeutralStroke3, rgba(255, 255, 255, 0.06));
+}
+
+.fields__row.is-reference .fields__value {
+    color: var(--accent, #4cc2ff);
+}
+
+/* 子字段默认折叠。用 hidden 属性而不是 display:none，
+   这样折叠时表格布局不会跳。 */
+.fields__child[hidden] {
+    display: none;
+}
+
+.fields__child .fields__name {
+    opacity: 0.85;
+}
+
+.fields__name {
+    padding: 4px 8px 4px 0;
+    white-space: nowrap;
+    vertical-align: top;
+    color: var(--colorNeutralForeground1, #e6e8ec);
+}
+
+.fields__type {
+    padding: 4px 8px 4px 0;
+    white-space: nowrap;
+    vertical-align: top;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    font-size: 11.5px;
+}
+
+.fields__value {
+    padding: 4px 0;
+    vertical-align: top;
+    word-break: break-word;
+    user-select: text;
+}
+
+.fields__toggle {
+    width: 16px;
+    height: 16px;
+    margin-right: 2px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    font-size: 10px;
+    line-height: 16px;
+    cursor: pointer;
+}
+
+.fields__toggle:hover {
+    background: var(--colorNeutralBackground1Hover, rgba(255, 255, 255, 0.06));
+    color: var(--colorNeutralForeground1, #e6e8ec);
+}
+
 .detail__text {
     flex: 1;
     min-height: 0;
@@ -1248,4 +1330,73 @@ fluent-checkbox {
 .load-more::part(control) {
     justify-content: center;
     width: 100%;
+}
+/* ---- 组件层级树 ----
+   还原 Prefab / 场景的 GameObject → 组件结构。
+   比读平铺的 YAML 直观得多，改 UI 时用来确认层级。 */
+
+.tree {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    font-size: 12.5px;
+}
+
+.tree__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.tree__item {
+    margin: 0;
+}
+
+.tree__row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0;
+    border-radius: 3px;
+}
+
+.tree__row:hover {
+    background: var(--colorNeutralBackground1Hover, rgba(255, 255, 255, 0.05));
+}
+
+.tree__toggle {
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    font-size: 9px;
+    line-height: 14px;
+    cursor: pointer;
+}
+
+.tree__spacer {
+    flex: 0 0 14px;
+}
+
+.tree__name {
+    color: var(--colorNeutralForeground1, #e6e8ec);
+    white-space: nowrap;
+}
+
+.tree__comp {
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    white-space: nowrap;
+}
+
+.tree__tag {
+    margin-left: 4px;
+    padding: 0 5px;
+    border-radius: 8px;
+    background: var(--colorNeutralBackground3, rgba(255, 255, 255, 0.06));
+    color: var(--colorNeutralForeground3, #9a9a9a);
+    font-size: 10.5px;
 }
