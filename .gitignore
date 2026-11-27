@@ -95,3 +95,6 @@ tools/release-ai.ps1
 tools/release-ui.ps1
 tools/dev-fix-encoding.ps1
 发布.cmd
+
+# 解压/测试留下的发布目录（RipPatch-1.0.0-win-x64/ 这种）
+RipPatch-*-win-x64/
