@@ -861,10 +861,56 @@ function Invoke-Publish {
     $exe = Join-Path $outDir 'RipPatch.exe'
     if (-not (Test-Path -LiteralPath $exe)) { throw "发布成功但找不到 $exe" }
 
+    # 清掉不该进分发包的东西（运行残留的 temp\、调试符号）
+    Clear-PublishDirectory -Directory $outDir
+
     $totalMb = [math]::Round(((Get-ChildItem -LiteralPath $outDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
     Write-Ok ("$outDir（{0:N0}s，{1} MB）" -f $sw.Elapsed.TotalSeconds, $totalMb)
-    Write-Info '整个目录可以拷到别的机器直接用，别只拷 exe——依赖和 wwwroot 都在里面。'
+    Write-Info '整个目录可以拷到别的机器直接用，别只拷 exe。'
     $script:PublishedExe = $exe
+}
+
+function Clear-PublishDirectory {
+    <#
+        清理发布目录里不该进分发包的东西。
+
+        <para><b>为什么不把 DLL 收进 bin\ 让 exe 单独一层。</b>试过，做不到。
+        .NET host 在自包含应用里严格按 deps.json 的条目找文件，不认子目录：
+        把 deps 里 400 多个路径全改写成 bin/Xxx.dll 后，即便文件确实在 bin\ 里，
+        host 仍然报 "assembly ... was not found"；additionalProbingPaths 对
+        运行时包内的程序集也不生效。所以 exe 必须和这些 DLL 平铺在同一层，
+        这是 .NET 的硬性约束，不是配置问题。</para>
+
+        <para>能做的是去掉不该来的东西：运行残留的 temp\（实测可达 565 MB）、
+        调试符号、运行时生成的设置文件。</para>
+    #>
+    param([Parameter(Mandatory)] [string]$Directory)
+
+    Write-Step '清理发布目录'
+
+    $tempDir = Join-Path $Directory 'temp'
+    if (Test-Path -LiteralPath $tempDir) {
+        $tempMb = [math]::Round(((Get-ChildItem -LiteralPath $tempDir -Recurse -File -EA SilentlyContinue |
+            Measure-Object Length -Sum).Sum / 1MB), 1)
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -EA SilentlyContinue
+        Write-Info "已清理运行残留 temp\（$tempMb MB）"
+    }
+
+    $pdbFiles = @(Get-ChildItem -LiteralPath $Directory -Recurse -File -Filter '*.pdb' -EA SilentlyContinue)
+    if ($pdbFiles.Count -gt 0) {
+        $pdbMb = [math]::Round(($pdbFiles | Measure-Object Length -Sum).Sum / 1MB, 1)
+        $pdbFiles | Remove-Item -Force -EA SilentlyContinue
+        Write-Info "已移除 $($pdbFiles.Count) 个调试符号（$pdbMb MB）"
+    }
+
+    # 运行时生成的用户设置，带进包会把开发机的配置泄漏出去
+    $settings = Join-Path $Directory 'AssetRipper.Settings.json'
+    if (Test-Path -LiteralPath $settings) {
+        Remove-Item -LiteralPath $settings -Force -EA SilentlyContinue
+    }
+
+    $count = (Get-ChildItem -LiteralPath $Directory -File -EA SilentlyContinue | Measure-Object).Count
+    Write-Info "根目录 $count 个文件"
 }
 
 function Invoke-Package {

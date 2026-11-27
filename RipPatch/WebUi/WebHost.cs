@@ -115,6 +115,30 @@ internal static class WebHost
 		return app;
 	}
 
+	/// <summary>
+	/// 查找随程序分发的资源目录（wwwroot、icon.ico 这类）。
+	/// 发布包有两种布局：
+	/// 1. 所有文件平铺在 exe 旁边（dotnet publish 的默认输出）
+	/// 2. exe 单独在外，其余运行文件在 bin\ 下（arp.ps1 publish 的可选整理）
+	/// 两种都要能找到，所以先看 exe 目录，再看 bin\。
+	/// </summary>
+	private static string? FindResourcePath(string relativePath)
+	{
+		string local = Path.Combine(AppContext.BaseDirectory, relativePath);
+		if (File.Exists(local) || Directory.Exists(local))
+		{
+			return local;
+		}
+
+		string bundled = Path.Combine(AppContext.BaseDirectory, "bin", relativePath);
+		if (File.Exists(bundled) || Directory.Exists(bundled))
+		{
+			return bundled;
+		}
+
+		return null;
+	}
+
 	private static string ResolveWebRoot()
 	{
 			// 开发期优先用源码里的 wwwroot：改 CSS/JS 后只需刷新界面，
@@ -130,8 +154,7 @@ internal static class WebHost
 				}
 			}
 	#endif
-			string published = Path.Combine(AppContext.BaseDirectory, "wwwroot");
-			if (Directory.Exists(published))
+			if (FindResourcePath("wwwroot") is { } published)
 			{
 				return published;
 			}
@@ -144,7 +167,7 @@ internal static class WebHost
 					return source;
 				}
 			}
-			return published;
+			return Path.Combine(AppContext.BaseDirectory, "wwwroot");
 		}
 
 	private static string? FindProjectDirectory()
@@ -173,10 +196,10 @@ internal static class WebHost
 
 		PhotinoWindow window = new();
 
-		// 窗口标题栏 / 任务栏图标。用 exe 同目录的 icon.ico（发布时随程序一起拷）。
+		// 窗口标题栏 / 任务栏图标。用 exe 同目录或 bin\ 下的 icon.ico（发布时随程序一起拷）。
 		// 找不到就跳过：没有图标不该阻止程序启动。
-		string iconPath = Path.Combine(AppContext.BaseDirectory, "icon.ico");
-		if (File.Exists(iconPath))
+		string? iconPath = FindResourcePath("icon.ico");
+		if (iconPath is not null)
 		{
 			try
 			{
