@@ -98,3 +98,6 @@ tools/dev-fix-encoding.ps1
 
 # 解压/测试留下的发布目录（RipPatch-1.0.0-win-x64/ 这种）
 RipPatch-*-win-x64/
+
+# 发布说明草稿（发布工具生成）
+.release-notes.md
